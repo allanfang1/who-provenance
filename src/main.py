@@ -1,10 +1,12 @@
 import argparse
 from db import get_connection, setup, get_db_overview
-from log import ingest_log_files
+from log import ingest_log_files, delete_log_files, drop_log_table
 
 
 def reset():
     conn = get_connection()
+    delete_log_files()
+    drop_log_table(conn)
     setup(conn, reset=True)
     print("reset")
 

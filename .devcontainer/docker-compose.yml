@@ -1,23 +1,14 @@
 # version: '3.8'
-
 services:
   app:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
-
     volumes:
       - ../..:/workspaces:cached
-
-    # Overrides default command so things don't shut down after the process ends.
+      - shared-logs:/logs
     command: sleep infinity
-
-    # Runs app on the same network as the database container, allows "forwardPorts" in devcontainer.json function.
     network_mode: service:db
-
-    # Use "forwardPorts" in **devcontainer.json** to forward an app port locally.
-    # (Adding the "ports" property to this file will not forward from a Codespace.)
-
   db:
     build:
       context: .
@@ -25,12 +16,17 @@ services:
     restart: unless-stopped
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - shared-logs:/logs
     command:
       - postgres
       - -c
+      - shared_preload_libraries=pgaudit
+      - -c
       - logging_collector=on
       - -c
-      - log_directory=log
+      - log_destination=csvlog
+      - -c
+      - log_directory=/logs
       - -c
       - log_file_mode=0644
     environment:
@@ -38,8 +34,6 @@ services:
       POSTGRES_DB: postgres
       POSTGRES_PASSWORD: postgres
 
-    # Add "forwardPorts": [5432] to **devcontainer.json** to forward PostgreSQL locally.
-    # (Adding the "ports" property to this file will not forward from a Codespace.)
-
 volumes:
   postgres-data:
+  shared-logs:
