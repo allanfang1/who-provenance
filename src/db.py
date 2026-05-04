@@ -5,7 +5,7 @@ Two tables: people, memberships
 Query we blame against:
     SELECT p.name, m.role
     FROM people p
-    JOIN memberships m ON p.id = m.person_id
+    JOIN memberships m ON p.email = m.email
     WHERE m.active = true
 
 Three blame categories covered:
@@ -28,65 +28,137 @@ def get_connection(host="localhost", port=5432, dbname="postgres",
 
 def setup(conn, reset=False):
     """
-    Create tables, populate data, return (T_start, T_end) window.
-    Alice is inserted before the window. Bob and Carol inside.
+    Create tables and permissions only.
     """
-    conn.autocommit = True
     cur = conn.cursor()
-
     if reset:
-        cur.execute(
-            "DROP TABLE IF EXISTS memberships; DROP TABLE IF EXISTS people;")
+        cur.execute("""
+            DROP TABLE IF EXISTS memberships;
+            DROP TABLE IF EXISTS people;
+            DROP TABLE IF EXISTS audit_log;
+        """)
 
-    # cur.execute("CREATE ROLE audit_tracker NOLOGIN;")
-    # cur.execute("ALTER SYSTEM SET pgaudit.role = 'audit_tracker';")
-    # cur.execute("SELECT pg_reload_conf();")
-
-    # conn.autocommit = False  # optional restore
     cur.execute("""
         CREATE TABLE IF NOT EXISTS people (
             id          SERIAL PRIMARY KEY,
             name        TEXT NOT NULL,
-            email       TEXT NOT NULL UNIQUE,
+            email       TEXT NOT NULL,
             deprecated  BOOLEAN NOT NULL DEFAULT false
         );
         CREATE TABLE IF NOT EXISTS memberships (
             id          SERIAL PRIMARY KEY,
-            person_id   INTEGER NOT NULL REFERENCES people(id),
+            email       TEXT NOT NULL,
             role        TEXT NOT NULL,
             active      BOOLEAN NOT NULL DEFAULT true,
             deprecated  BOOLEAN NOT NULL DEFAULT false
         );
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id          SERIAL PRIMARY KEY,
+            ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+            db_user     TEXT NOT NULL,
+            action      TEXT NOT NULL,
+            table_name  TEXT NOT NULL,
+            row_id      INTEGER NOT NULL,
+            query       TEXT
+        );
+
+        CREATE OR REPLACE FUNCTION audit_trigger() RETURNS trigger AS $$
+        BEGIN
+            INSERT INTO audit_log (db_user, action, table_name, row_id, query)
+            VALUES (current_user, TG_OP, TG_TABLE_NAME, NEW.id, current_query());
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        CREATE OR REPLACE TRIGGER people_audit
+            AFTER INSERT OR UPDATE ON people
+            FOR EACH ROW EXECUTE FUNCTION audit_trigger();
+
+        CREATE OR REPLACE TRIGGER memberships_audit
+            AFTER INSERT OR UPDATE ON memberships
+            FOR EACH ROW EXECUTE FUNCTION audit_trigger();
+
+        CREATE UNIQUE INDEX IF NOT EXISTS people_email_active_uq
+            ON people (email)
+            WHERE deprecated = false;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS memberships_active_uq
+            ON memberships (email, role, active)
+            WHERE deprecated = false;
+
         GRANT SELECT, INSERT, UPDATE, DELETE ON people      TO audit_tracker;
         GRANT SELECT, INSERT, UPDATE, DELETE ON memberships TO audit_tracker;
-        GRANT USAGE, SELECT ON SEQUENCE people_id_seq      TO audit_tracker;
-        GRANT USAGE, SELECT ON SEQUENCE memberships_id_seq TO audit_tracker;
+        GRANT INSERT                          ON audit_log   TO audit_tracker;
+        GRANT USAGE, SELECT ON SEQUENCE people_id_seq       TO audit_tracker;
+        GRANT USAGE, SELECT ON SEQUENCE memberships_id_seq  TO audit_tracker;
+        GRANT USAGE, SELECT ON SEQUENCE audit_log_id_seq    TO audit_tracker;
     """)
+    cur.close()
 
-    # Phase 0: before window — unattributed
-    cur.execute(
-        "INSERT INTO people (name, email) VALUES ('Alice', 'alice@example.com') ON CONFLICT DO NOTHING RETURNING id")
+
+def insert(cur, table, data):
+    """
+    Insert a new row into table. data is a dict of column->value.
+    """
+    columns = data.keys()
+    values = list(data.values())
+    query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) ON CONFLICT DO NOTHING RETURNING id").format(
+        sql.Identifier(table),
+        sql.SQL(", ").join(map(sql.Identifier, columns)),
+        sql.SQL(", ").join(sql.Placeholder() * len(values))
+    )
+
+    cur.execute(query, values)
     row = cur.fetchone()
-    if row:
-        cur.execute(
-            "INSERT INTO memberships (person_id, role) VALUES (%s, 'Observer')", (row[0],))
+    return row[0] if row else None
 
-    # Phase 1: positive blame
-    cur.execute(
-        "INSERT INTO people (name, email) VALUES ('Bob', 'bob@example.com') ON CONFLICT DO NOTHING RETURNING id")
-    bob_id = cur.fetchone()[0]
-    cur.execute(
-        "INSERT INTO memberships (person_id, role) VALUES (%s, 'Member')", (bob_id,))
 
-    # Phase 2: negative blame — insert then deactivate
+def update(cur, table, row_id, data):
+    """
+    Soft-update: deprecate the old row, insert a new one with updated values.
+    Returns the new row id, or None if the row doesn't exist or is already deprecated.
+    """
     cur.execute(
-        "INSERT INTO people (name, email) VALUES ('Carol', 'carol@example.com') ON CONFLICT DO NOTHING RETURNING id")
-    carol_id = cur.fetchone()[0]
+        sql.SQL("SELECT * FROM {} WHERE id = %s AND deprecated = false").format(
+            sql.Identifier(table)
+        ),
+        [row_id]
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None  # row doesn't exist or is already deprecated, nothing to do
+
+    colnames = [desc[0] for desc in cur.description]
+    current = dict(zip(colnames, row))
+
+    # Check if the update would actually change anything
+    if all(current.get(k) == v for k, v in data.items()):
+        return row_id  # nothing changed, return existing id
+
     cur.execute(
-        "INSERT INTO memberships (person_id, role) VALUES (%s, 'Lead') RETURNING id", (carol_id,))
-    carol_m_id = cur.fetchone()[0]
+        sql.SQL("UPDATE {} SET deprecated = true WHERE id = %s").format(
+            sql.Identifier(table)
+        ),
+        [row_id]
+    )
+
+    new_data = {k: v for k, v in current.items() if k not in ("id",
+                                                              "deprecated")}
+    new_data.update(data)
+
+    return insert(cur, table, new_data)
+
+
+def delete(cur, table, row_id):
+    """
+    Soft-delete: just set deprecated = true.
+    """
     cur.execute(
-        "UPDATE memberships SET active = false WHERE id = %s", (carol_m_id,))
+        sql.SQL("UPDATE {} SET deprecated = true WHERE id = %s").format(
+            sql.Identifier(table)),
+        [row_id]
+    )
+    return cur.rowcount > 0
 
 
 def get_db_overview(conn, limit=5):

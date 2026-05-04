@@ -1,12 +1,12 @@
 import argparse
-from db import get_connection, setup, get_db_overview
-from log import ingest_log_files, delete_log_files, drop_log_table
+from db import get_connection, setup, get_db_overview, insert, update, delete
+# from log import ingest_log_files, delete_log_files, drop_log_table
 
 
 def reset():
     conn = get_connection()
-    delete_log_files()
-    drop_log_table(conn)
+    # delete_log_files()
+    # drop_log_table(conn)
     setup(conn, reset=True)
     print("reset")
 
@@ -23,18 +23,43 @@ def check():
     print("check")
 
 
-def ingest_logs():
+def test_insert():
     conn = get_connection()
-    counts = ingest_log_files(conn)
-    for file_name, count in counts.items():
-        print(f"{file_name}: {count} lines ingested")
-    print("ingest_logs")
+    cur = conn.cursor()
+    print(insert(cur, "people", {
+          "name": "Alice", "email": "alice@example.com"}))
+    print(insert(cur, "people", {"name": "Bob", "email": "bob@example.com"}))
+    print("test_insert")
+
+
+def test_update():
+    conn = get_connection()
+    cur = conn.cursor()
+    print(update(cur, "people", 1, {"name": "Alison"}))
+    print("test_update")
+
+
+def test_delete():
+    conn = get_connection()
+    cur = conn.cursor()
+    print(delete(cur, "people", 2))
+    print("test_delete")
+
+# def ingest_logs():
+#     conn = get_connection()
+#     counts = ingest_log_files(conn)
+#     for file_name, count in counts.items():
+#         print(f"{file_name}: {count} lines ingested")
+#     print("ingest_logs")
 
 
 COMMANDS = {
     "reset": reset,
     "check": check,
-    "ingest_logs": ingest_logs
+    # "ingest_logs": ingest_logs
+    "test_insert": test_insert,
+    "test_update": test_update,
+    "test_delete": test_delete,
 }
 
 
