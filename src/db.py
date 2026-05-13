@@ -32,14 +32,14 @@ def setup(conn, reset=False):
     cur.execute("""
         CREATE TABLE IF NOT EXISTS people (
             id          SERIAL PRIMARY KEY,
-            name        TEXT NOT NULL,
-            email       TEXT NOT NULL,
+            x           TEXT NOT NULL,
+            y           TEXT NOT NULL,
             alive       BOOLEAN NOT NULL DEFAULT true
         );
         CREATE TABLE IF NOT EXISTS memberships (
             id          SERIAL PRIMARY KEY,
-            email       TEXT NOT NULL,
-            role        TEXT NOT NULL,
+            y           TEXT NOT NULL,
+            z           TEXT NOT NULL,
             alive       BOOLEAN NOT NULL DEFAULT true
         );
         CREATE TABLE IF NOT EXISTS audit_log (
@@ -55,12 +55,12 @@ def setup(conn, reset=False):
 
     # Create indexes
     cur.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS people_email_active_uq
-            ON people (email)
+        CREATE UNIQUE INDEX IF NOT EXISTS people_y_active_uq
+            ON people (y)
             WHERE alive = true;
 
         CREATE UNIQUE INDEX IF NOT EXISTS memberships_active_uq
-            ON memberships (email, role)
+            ON memberships (y, z)
             WHERE alive = true;
     """)
 
@@ -121,20 +121,31 @@ def setup(conn, reset=False):
         
         -- Annotation +: Final function to remove duplicates and sort inner arrays, keeping only the those with a MAXVALUE
         CREATE OR REPLACE FUNCTION annotations_union_final_min(state jsonb) RETURNS jsonb AS $$
-            SELECT jsonb_agg(DISTINCT sorted_elem)
-            FROM (
-                SELECT (SELECT jsonb_agg(n ORDER BY n::numeric) 
-                        FROM jsonb_array_elements(elem) AS n) AS sorted_elem
-                FROM jsonb_array_elements(state) AS elem
-                WHERE elem @> to_jsonb(9223372036854775807::bigint)
-            ) s;
+            SELECT CASE
+                WHEN EXISTS (
+                    SELECT 1 
+                    FROM jsonb_array_elements(state) AS elem,
+                        jsonb_array_elements(elem) AS inner_elem
+                    WHERE inner_elem = to_jsonb(9223372036854775807::bigint)
+                )
+                THEN (
+                    SELECT jsonb_agg(DISTINCT sorted_elem)
+                    FROM (
+                        SELECT (SELECT jsonb_agg(n ORDER BY n::numeric) 
+                                FROM jsonb_array_elements(elem) AS n) AS sorted_elem
+                        FROM jsonb_array_elements(state) AS elem
+                        WHERE elem @> to_jsonb(9223372036854775807::bigint)
+                    ) s
+                )
+                ELSE state
+            END;
         $$ LANGUAGE sql;
         
         -- Annotation +: Custom aggregate
         CREATE OR REPLACE AGGREGATE add_annotations(jsonb) (
             SFUNC = annotations_union_trans,
             STYPE = jsonb,
-            FINLFUNC = annotations_union_final,
+            FINALFUNC = annotations_union_final,
             INITCOND = '[]'
         );
 
@@ -142,7 +153,7 @@ def setup(conn, reset=False):
         CREATE OR REPLACE AGGREGATE add_annotations_min(jsonb) (
             SFUNC = annotations_union_trans,
             STYPE = jsonb,
-            FINLFUNC = annotations_union_final_min,
+            FINALFUNC = annotations_union_final_min,
             INITCOND = '[]'
         );
 
@@ -303,6 +314,7 @@ def get_table_columns(conn, table_name):
     cur.close()
     return columns
 
+
 def get_table_columns_no_annotation(conn, table_name):
     cur = conn.cursor()
     cur.execute(
@@ -319,6 +331,7 @@ def get_table_columns_no_annotation(conn, table_name):
     cur.close()
     return columns
 
+
 def get_table_columns_no_id(conn, table_name):
     cur = conn.cursor()
     cur.execute(
@@ -334,6 +347,7 @@ def get_table_columns_no_id(conn, table_name):
     columns = [row[0] for row in cur.fetchall()]
     cur.close()
     return columns
+
 
 def get_table_columns_no_id_annotation(conn, table_name):
     cur = conn.cursor()

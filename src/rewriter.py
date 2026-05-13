@@ -57,9 +57,9 @@ class Rewriter:
     @staticmethod
     def join(t1, t1_columns: list, t2, t2_columns: list, join_condition):
         """t1_columns and t2_columns are lists of column names to project from each table, and join_condition is a string like "t1.id = t2.user_id"
-        Assume columns are all columns of each"""
-        t1_cols = [f"t1.{c}" for c in t1_columns]
-        t2_cols = [f"t2.{c}" for c in t2_columns]
+        Assume columns are all columns except 'annotation'"""
+        t1_cols = [f"t1.{c} AS t1_{c}" for c in t1_columns]
+        t2_cols = [f"t2.{c} AS t2_{c}" for c in t2_columns]
 
         columns = ", ".join(t1_cols + t2_cols)
         return f"SELECT {columns}, join_annotations(t1.annotation, t2.annotation) as annotation FROM {t1} t1 JOIN {t2} t2 ON {join_condition}"

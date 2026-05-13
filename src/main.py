@@ -27,14 +27,14 @@ def check():
 def test_insert():
     conn = get_connection()
     print(insert(conn, "people", {
-          "name": "Alice", "email": "alice@example.com"}))
-    print(insert(conn, "people", {"name": "Bob", "email": "bob@example.com"}))
+          "x": "Alice", "y": "alice@example.com"}))
+    print(insert(conn, "people", {"x": "Bob", "y": "bob@example.com"}))
     print("test_insert")
 
 
 def test_update():
     conn = get_connection()
-    print(update(conn, "people", 1, {"name": "Alison"}))
+    print(update(conn, "people", 1, {"x": "Alison"}))
     print("test_update")
 
 
@@ -58,23 +58,23 @@ def run_test():
     reset()
 
     # --- seed data ---
-    insert(conn, "memberships", {"email": "b1", "role": "e"})
+    insert(conn, "memberships", {"y": "b1", "z": "e"})
 
     r0_id = insert(
-        conn, "people", {"name": "a", "email": "b"})
+        conn, "people", {"x": "a", "y": "b"})
     delete(conn, "people", r0_id)
-    
+
     r1_id = insert(
-        conn, "people", {"name": "a", "email": "b"})
-    update(conn, "people", r1_id, {"email": "b1"})
+        conn, "people", {"x": "a", "y": "b"})
+    update(conn, "people", r1_id, {"y": "b1"})
 
     s1_id = insert(conn, "memberships", {
-        "email": "b", "role": "c"})
-    update(conn, "memberships", s1_id, {"email": "b1"})
+        "y": "b", "z": "c"})
+    update(conn, "memberships", s1_id, {"y": "b1"})
 
     s3_id = insert(conn, "memberships", {
-        "email": "b1", "role": "d"})
-    s4_id = update(conn, "memberships", s3_id, {"role": "d1"})
+        "y": "b1", "z": "d"})
+    s4_id = update(conn, "memberships", s3_id, {"z": "d1"})
 
     delete(conn, "memberships", s4_id)
 
@@ -84,24 +84,27 @@ def run_test():
     columns_people = get_table_columns_no_annotation(conn, 'people')
     columns_memberships = get_table_columns_no_annotation(conn, 'memberships')
 
-    # my_query = Rewriter.build_cte([
-    #     # ("step1", Rewriter.scan("memberships", "2", "99")),
-    #     # ("buh", Rewriter.aggregate("step1", columns_memberships)),
-    #     ("final", Rewriter.scan("people", get_table_columns(conn, 'people'), "2", "99")),
-    #     # ("fdf", Rewriter.aggregate("step3", columns_people)),
-    #     # ("final", Rewriter.join("step4", columns_people, "step2", columns_memberships, "t1.email = t2.email"))
-    # ], "SELECT * FROM final")
+    columns_people_no_id_annotation = get_table_columns_no_id_annotation(
+        conn, 'people')
+    columns_memberships_no_id_annotation = get_table_columns_no_id_annotation(
+        conn, 'memberships')
 
     my_query = Rewriter.build_cte([
         ("step1", Rewriter.scan("memberships", columns_memberships, "2", "99")),
         ("step2", Rewriter.scan("people", columns_people, "2", "99")),
-        ("final", Rewriter.join("step2", get_table_columns_no_id_annotation(conn, 'people'), "step1", get_table_columns_no_id_annotation(conn, 'memberships'), "t1.email = t2.email"))
+        ("step3", Rewriter.join("step2", columns_people_no_id_annotation,
+         "step1", columns_memberships_no_id_annotation, "t1.y = t2.y")),
+        ("final", Rewriter.aggregate_min(
+            "step3", ["t1_x", "t1_y"]))
     ], "SELECT * FROM final")
 
     cur.execute(my_query)
+    column_names = [desc[0] for desc in cur.description]
     rows = cur.fetchall()
+    print(column_names)
     for row in rows:
         print(row)
+
     print("run_test")
 
 
