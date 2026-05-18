@@ -51,6 +51,35 @@ def test_delete():
 #     print("ingest_logs")
 
 
+def test_classic():
+    conn = get_connection()
+
+    reset()
+
+    # --- seed data ---
+    insert(conn, "memberships", {"y": "b1", "z": "e"})
+
+    r0_id = insert(
+        conn, "people", {"x": "a", "y": "b"})
+    delete(conn, "people", r0_id)
+
+    r1_id = insert(
+        conn, "people", {"x": "a", "y": "b"})
+    update(conn, "people", r1_id, {"y": "b1"})
+
+    s1_id = insert(conn, "memberships", {
+        "y": "b", "z": "c"})
+    update(conn, "memberships", s1_id, {"y": "b1"})
+
+    s3_id = insert(conn, "memberships", {
+        "y": "b1", "z": "d"})
+    s4_id = update(conn, "memberships", s3_id, {"z": "d1"})
+
+    delete(conn, "memberships", s4_id)
+
+    print("test_classic")
+
+
 def run_test():
     conn = get_connection()
     cur = conn.cursor()
@@ -116,6 +145,7 @@ COMMANDS = {
     "test_update": test_update,
     "test_delete": test_delete,
     "run_test": run_test,
+    "test_classic": test_classic,
 }
 
 

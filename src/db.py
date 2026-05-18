@@ -21,11 +21,8 @@ def setup(conn, reset=False):
     cur = conn.cursor()
     if reset:
         cur.execute("""
-            DROP TABLE IF EXISTS memberships;
-            DROP TABLE IF EXISTS people;
-            DROP TABLE IF EXISTS audit_log;
-            DROP FUNCTION IF EXISTS join_annotations(jsonb, jsonb);
-            DROP FUNCTION IF EXISTS annotate(BIGINT, BOOLEAN);
+            DROP SCHEMA public CASCADE;
+            CREATE SCHEMA public;
         """)
 
     # Create tables
@@ -34,17 +31,19 @@ def setup(conn, reset=False):
             id          SERIAL PRIMARY KEY,
             x           TEXT NOT NULL,
             y           TEXT NOT NULL,
-            alive       BOOLEAN NOT NULL DEFAULT true
+            birth       TIMESTAMPTZ NOT NULL,
+            death       TIMESTAMPTZ
         );
         CREATE TABLE IF NOT EXISTS memberships (
             id          SERIAL PRIMARY KEY,
             y           TEXT NOT NULL,
             z           TEXT NOT NULL,
-            alive       BOOLEAN NOT NULL DEFAULT true
+            birth       TIMESTAMPTZ NOT NULL,
+            death       TIMESTAMPTZ
         );
         CREATE TABLE IF NOT EXISTS audit_log (
             id          BIGSERIAL PRIMARY KEY,
-            ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+            ts          TIMESTAMPTZ NOT NULL,
             db_user     TEXT NOT NULL,
             action      TEXT NOT NULL,
             table_name  TEXT NOT NULL,
@@ -53,23 +52,30 @@ def setup(conn, reset=False):
         );
     """)
 
-    # Create indexes
-    cur.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS people_y_active_uq
-            ON people (y)
-            WHERE alive = true;
+    # Create indexes TODO
+    # cur.execute("""
+    #     CREATE UNIQUE INDEX IF NOT EXISTS people_y_active_uq
+    #         ON people (y)
+    #         WHERE alive = true;
 
-        CREATE UNIQUE INDEX IF NOT EXISTS memberships_active_uq
-            ON memberships (y, z)
-            WHERE alive = true;
-    """)
+    #     CREATE UNIQUE INDEX IF NOT EXISTS memberships_active_uq
+    #         ON memberships (y, z)
+    #         WHERE alive = true;
+    # """)
 
     # Create audit trigger
     cur.execute("""
         CREATE OR REPLACE FUNCTION audit_trigger() RETURNS trigger AS $$
+        DECLARE
+            ts TIMESTAMPTZ;
         BEGIN
-            INSERT INTO audit_log (db_user, action, table_name, row_id, query)
-            VALUES (current_user, TG_OP, TG_TABLE_NAME, NEW.id, current_query());
+            IF TG_OP = 'INSERT' THEN
+                ts := NEW.birth;
+            ELSIF TG_OP = 'UPDATE' THEN
+                ts := NEW.death;
+            END IF;
+            INSERT INTO audit_log (ts, db_user, action, table_name, row_id, query)
+            VALUES (ts, current_user, TG_OP, TG_TABLE_NAME, NEW.id, current_query());
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql;
@@ -184,7 +190,7 @@ def insert(conn, table, data):
     cur = conn.cursor()
     columns = data.keys()
     values = list(data.values())
-    query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) ON CONFLICT DO NOTHING RETURNING id").format(
+    query = sql.SQL("INSERT INTO {} (birth, {}) VALUES (now(), {}) ON CONFLICT DO NOTHING RETURNING id").format(
         sql.Identifier(table),
         sql.SQL(", ").join(map(sql.Identifier, columns)),
         sql.SQL(", ").join(sql.Placeholder() * len(values))
@@ -203,7 +209,7 @@ def update(conn, table, row_id, data):
     """
     cur = conn.cursor()
     cur.execute(
-        sql.SQL("SELECT * FROM {} WHERE id = %s AND alive = true").format(
+        sql.SQL("SELECT * FROM {} WHERE id = %s AND death IS NULL").format(
             sql.Identifier(table)
         ),
         [row_id]
@@ -219,16 +225,19 @@ def update(conn, table, row_id, data):
     if all(current.get(k) == v for k, v in data.items()):
         return row_id  # nothing changed, return existing id
 
+    # Soft-delete the old row by setting death timestamp
     cur.execute(
-        sql.SQL("UPDATE {} SET alive = false WHERE id = %s").format(
+        sql.SQL("UPDATE {} SET death = now() WHERE id = %s").format(
             sql.Identifier(table)
         ),
         [row_id]
     )
 
+    # Get full current data
     new_data = {k: v for k, v in current.items() if k not in ("id",
-                                                              "alive")}
-    new_data.update(data)
+                                                              "birth", "death")}
+    new_data.update(data)  # overwrite with updated values
+    # insert new row with same data + updates, returns new id
     res = insert(conn, table, new_data)
     cur.close()
     return res
@@ -236,11 +245,11 @@ def update(conn, table, row_id, data):
 
 def delete(conn, table, row_id):
     """
-    Soft-delete: just set 'alive' = false.
+    Soft-delete: just set death = now().
     """
     cur = conn.cursor()
     cur.execute(
-        sql.SQL("UPDATE {} SET alive = false WHERE id = %s").format(
+        sql.SQL("UPDATE {} SET death = now() WHERE id = %s").format(
             sql.Identifier(table)),
         [row_id]
     )

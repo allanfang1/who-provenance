@@ -79,3 +79,7 @@ class Rewriter:
         """Uses custom aggregate function to combine annotations"""
         cols = ", ".join(columns)
         return f"SELECT {cols}, add_annotations_min(annotation) AS annotation FROM {table} GROUP BY {cols}"
+
+    @staticmethod
+    def rename():
+        pass
