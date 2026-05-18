@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import json
 from db import *
 from rewriter import Rewriter
@@ -24,128 +25,176 @@ def check():
     print("check")
 
 
-def test_insert():
+def test_seeding():
     conn = get_connection()
-    print(insert(conn, "people", {
-          "x": "Alice", "y": "alice@example.com"}))
-    print(insert(conn, "people", {"x": "Bob", "y": "bob@example.com"}))
-    print("test_insert")
 
+    # optional
+    print("Truncate tables")
+    truncate_tables(conn)
 
-def test_update():
-    conn = get_connection()
-    print(update(conn, "people", 1, {"x": "Alison"}))
-    print("test_update")
+    insert(conn, "memberships", {"y": "b1", "z": "e"})
 
+    r0_id = insert(
+        conn, "people", {"x": "a", "y": "b"})["id"]
+    delete(conn, "people", r0_id)
 
-def test_delete():
-    conn = get_connection()
-    print(delete(conn, "people", 2))
-    print("test_delete")
+    r1_id = insert(
+        conn, "people", {"x": "a", "y": "b"})["id"]
+    update(conn, "people", r1_id, {"y": "b1"})
 
-# def ingest_logs():
-#     conn = get_connection()
-#     counts = ingest_log_files(conn)
-#     for file_name, count in counts.items():
-#         print(f"{file_name}: {count} lines ingested")
-#     print("ingest_logs")
+    s1_id = insert(conn, "memberships", {
+        "y": "b", "z": "c"})["id"]
+    update(conn, "memberships", s1_id, {"y": "b1"})
+
+    s3_id = insert(conn, "memberships", {
+        "y": "b1", "z": "d"})["id"]
+    s4_id = update(conn, "memberships", s3_id, {"z": "d1"})["id"]
+
+    delete(conn, "memberships", s4_id)
+
+    print("test_seeding")
 
 
 def test_classic():
-    conn = get_connection()
-
-    reset()
-
-    # --- seed data ---
-    insert(conn, "memberships", {"y": "b1", "z": "e"})
-
-    r0_id = insert(
-        conn, "people", {"x": "a", "y": "b"})
-    delete(conn, "people", r0_id)
-
-    r1_id = insert(
-        conn, "people", {"x": "a", "y": "b"})
-    update(conn, "people", r1_id, {"y": "b1"})
-
-    s1_id = insert(conn, "memberships", {
-        "y": "b", "z": "c"})
-    update(conn, "memberships", s1_id, {"y": "b1"})
-
-    s3_id = insert(conn, "memberships", {
-        "y": "b1", "z": "d"})
-    s4_id = update(conn, "memberships", s3_id, {"z": "d1"})
-
-    delete(conn, "memberships", s4_id)
-
+    """The frame of reference"""
     print("test_classic")
-
-
-def run_test():
     conn = get_connection()
     cur = conn.cursor()
 
-    reset()
+    test_seeding()
 
-    # --- seed data ---
-    insert(conn, "memberships", {"y": "b1", "z": "e"})
+    cur.execute(
+        """
+        SELECT r.x, r.y
+        FROM people AS r
+        JOIN memberships AS s ON r.y = s.y
+        WHERE r.death = 'infinity' AND s.death = 'infinity'
+        GROUP BY r.x, r.y
+        """
+    )
 
-    r0_id = insert(
-        conn, "people", {"x": "a", "y": "b"})
-    delete(conn, "people", r0_id)
+    result = print_query_results(cur)
+    expected = [('a', 'b1')]
+    validate(result, expected)
 
-    r1_id = insert(
-        conn, "people", {"x": "a", "y": "b"})
-    update(conn, "people", r1_id, {"y": "b1"})
 
-    s1_id = insert(conn, "memberships", {
-        "y": "b", "z": "c"})
-    update(conn, "memberships", s1_id, {"y": "b1"})
+def validate(result, expected):
+    if result == expected:
+        print("PASS")
+    else:
+        print("FAIL")
+        print("Expected:", expected)
 
-    s3_id = insert(conn, "memberships", {
-        "y": "b1", "z": "d"})
-    s4_id = update(conn, "memberships", s3_id, {"z": "d1"})
 
-    delete(conn, "memberships", s4_id)
+def test_positive():
+    """Make time travel work, 3 cases:
+    1) x = a included: birth before window_end and no death
+    2) x = a1 not included: birth after window_end
+    3) x = a2 included: death after window_end
+    """
+    print("test_positive")
+    conn = get_connection()
+    cur = conn.cursor()
+    test_seeding()
 
-    # check()
+    # insert x = a2
+    tmp_id = insert(conn, "people", {"x": "a2", "y": "b1"})["id"]
 
-    # --- run test query ---
-    columns_people = get_table_columns_no_annotation(conn, 'people')
-    columns_memberships = get_table_columns_no_annotation(conn, 'memberships')
+    # set window_end to now
+    window_end = datetime.datetime.now(datetime.timezone.utc)
 
-    columns_people_no_id_annotation = get_table_columns_no_id_annotation(
-        conn, 'people')
-    columns_memberships_no_id_annotation = get_table_columns_no_id_annotation(
-        conn, 'memberships')
+    # x = a1
+    insert(conn, "people", {"x": "a1", "y": "b1"})
 
-    my_query = Rewriter.build_cte([
-        ("step1", Rewriter.scan("memberships", columns_memberships, "2", "99")),
-        ("step2", Rewriter.scan("people", columns_people, "2", "99")),
-        ("step3", Rewriter.join("step2", columns_people_no_id_annotation,
-         "step1", columns_memberships_no_id_annotation, "t1.y = t2.y")),
-        ("final", Rewriter.aggregate_min(
-            "step3", ["t1_x", "t1_y"]))
-    ], "SELECT * FROM final")
+    # test the death after window_end case
+    delete(conn, "people", tmp_id)
 
-    cur.execute(my_query)
+    cur.execute(
+        """
+        SELECT r.x, r.y
+        FROM people AS r
+        JOIN memberships AS s ON r.y = s.y
+        WHERE r.death > %s
+            AND r.birth <= %s
+            AND s.death > %s
+            AND s.birth <= %s
+        GROUP BY r.x, r.y
+        """, (window_end, window_end, window_end, window_end))
+
+    result = print_query_results(cur)
+    expected = [('a2', 'b1'), ('a', 'b1')]
+    validate(result, expected)
+
+
+# def run_test():
+#     conn = get_connection()
+#     cur = conn.cursor()
+
+#     reset()
+
+#     # --- seed data ---
+#     insert(conn, "memberships", {"y": "b1", "z": "e"})
+
+#     r0_id = insert(
+#         conn, "people", {"x": "a", "y": "b"})
+#     delete(conn, "people", r0_id)
+
+#     r1_id = insert(
+#         conn, "people", {"x": "a", "y": "b"})
+#     update(conn, "people", r1_id, {"y": "b1"})
+
+#     s1_id = insert(conn, "memberships", {
+#         "y": "b", "z": "c"})
+#     update(conn, "memberships", s1_id, {"y": "b1"})
+
+#     s3_id = insert(conn, "memberships", {
+#         "y": "b1", "z": "d"})
+#     s4_id = update(conn, "memberships", s3_id, {"z": "d1"})
+
+#     delete(conn, "memberships", s4_id)
+
+#     # check()
+
+#     # --- run test query ---
+#     columns_people = get_table_columns_no_annotation(conn, 'people')
+#     columns_memberships = get_table_columns_no_annotation(conn, 'memberships')
+
+#     columns_people_no_id_annotation = get_table_columns_no_id_annotation(
+#         conn, 'people')
+#     columns_memberships_no_id_annotation = get_table_columns_no_id_annotation(
+#         conn, 'memberships')
+
+#     my_query = Rewriter.build_cte([
+#         ("step1", Rewriter.scan("memberships", columns_memberships, "2", "99")),
+#         ("step2", Rewriter.scan("people", columns_people, "2", "99")),
+#         ("step3", Rewriter.join("step2", columns_people_no_id_annotation,
+#          "step1", columns_memberships_no_id_annotation, "t1.y = t2.y")),
+#         ("final", Rewriter.aggregate_min(
+#             "step3", ["t1_x", "t1_y"]))
+#     ], "SELECT * FROM final")
+
+#     cur.execute(my_query)
+#     print_query_results(cur)
+
+#     print("run_test")
+
+
+def print_query_results(cur, limit=None):
     column_names = [desc[0] for desc in cur.description]
-    rows = cur.fetchall()
+    rows = cur.fetchall() if limit is None else cur.fetchall()[:limit]
     print(column_names)
     for row in rows:
         print(row)
-
-    print("run_test")
+    return rows
 
 
 COMMANDS = {
     "reset": reset,
     "check": check,
-    # "ingest_logs": ingest_logs
-    "test_insert": test_insert,
-    "test_update": test_update,
-    "test_delete": test_delete,
-    "run_test": run_test,
+    # "run_test": run_test,
+    "test_seeding": test_seeding,
     "test_classic": test_classic,
+    "test_positive": test_positive,
 }
 
 

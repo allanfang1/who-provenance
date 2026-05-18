@@ -4,6 +4,7 @@ db.py - Database setup and utilities.
 
 import psycopg2
 from psycopg2 import sql
+from psycopg2.extras import RealDictCursor
 
 
 def get_connection(host="localhost", port=5432, dbname="postgres",
@@ -12,6 +13,13 @@ def get_connection(host="localhost", port=5432, dbname="postgres",
                             user=user, password=password)
     conn.autocommit = True
     return conn
+
+
+def truncate_tables(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        TRUNCATE people, memberships, audit_log;
+    """)
 
 
 def setup(conn, reset=False):
@@ -32,14 +40,14 @@ def setup(conn, reset=False):
             x           TEXT NOT NULL,
             y           TEXT NOT NULL,
             birth       TIMESTAMPTZ NOT NULL,
-            death       TIMESTAMPTZ
+            death       TIMESTAMPTZ default 'infinity'
         );
         CREATE TABLE IF NOT EXISTS memberships (
             id          SERIAL PRIMARY KEY,
             y           TEXT NOT NULL,
             z           TEXT NOT NULL,
             birth       TIMESTAMPTZ NOT NULL,
-            death       TIMESTAMPTZ
+            death       TIMESTAMPTZ default 'infinity'
         );
         CREATE TABLE IF NOT EXISTS audit_log (
             id          BIGSERIAL PRIMARY KEY,
@@ -53,7 +61,10 @@ def setup(conn, reset=False):
     """)
 
     # Create indexes TODO
-    # cur.execute("""
+    cur.execute("""
+        CREATE INDEX ON memberships(death);
+        CREATE INDEX ON people(death);
+    """)
     #     CREATE UNIQUE INDEX IF NOT EXISTS people_y_active_uq
     #         ON people (y)
     #         WHERE alive = true;
@@ -186,11 +197,14 @@ def setup(conn, reset=False):
 def insert(conn, table, data):
     """
     Insert a new row into table. data is a dict of column->value.
+    Returns dict with id and birth timestamp, or None if failed.
     """
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
     columns = data.keys()
     values = list(data.values())
-    query = sql.SQL("INSERT INTO {} (birth, {}) VALUES (now(), {}) ON CONFLICT DO NOTHING RETURNING id").format(
+
+    query = sql.SQL("INSERT INTO {} (birth, {}) VALUES (now(), {}) ON CONFLICT DO NOTHING RETURNING id, birth").format(
         sql.Identifier(table),
         sql.SQL(", ").join(map(sql.Identifier, columns)),
         sql.SQL(", ").join(sql.Placeholder() * len(values))
@@ -199,7 +213,7 @@ def insert(conn, table, data):
     cur.execute(query, values)
     row = cur.fetchone()
     cur.close()
-    return row[0] if row else None
+    return row if row else None
 
 
 def update(conn, table, row_id, data):
@@ -209,7 +223,7 @@ def update(conn, table, row_id, data):
     """
     cur = conn.cursor()
     cur.execute(
-        sql.SQL("SELECT * FROM {} WHERE id = %s AND death IS NULL").format(
+        sql.SQL("SELECT * FROM {} WHERE id = %s AND death = 'infinity'").format(
             sql.Identifier(table)
         ),
         [row_id]
@@ -246,16 +260,17 @@ def update(conn, table, row_id, data):
 def delete(conn, table, row_id):
     """
     Soft-delete: just set death = now().
+    Returns dict with id and death timestamp, or None if failed.
     """
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute(
-        sql.SQL("UPDATE {} SET death = now() WHERE id = %s").format(
+        sql.SQL("UPDATE {} SET death = now() WHERE id = %s RETURNING id, death").format(
             sql.Identifier(table)),
         [row_id]
     )
-    res = cur.rowcount > 0
+    res = cur.fetchone()
     cur.close()
-    return res
+    return res if res else None
 
 
 def get_db_overview(conn, limit=5):
