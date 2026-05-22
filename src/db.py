@@ -18,7 +18,7 @@ def get_connection(host="localhost", port=5432, dbname="postgres",
 def truncate_tables(conn):
     cur = conn.cursor()
     cur.execute("""
-        TRUNCATE people, memberships, audit_log;
+        TRUNCATE people, memberships, audit_log_pos, audit_log_neg;
     """)
 
 
@@ -39,17 +39,24 @@ def setup(conn, reset=False):
             id          SERIAL PRIMARY KEY,
             x           TEXT NOT NULL,
             y           TEXT NOT NULL,
-            birth       TIMESTAMPTZ NOT NULL,
             death       TIMESTAMPTZ default 'infinity'
         );
         CREATE TABLE IF NOT EXISTS memberships (
             id          SERIAL PRIMARY KEY,
             y           TEXT NOT NULL,
             z           TEXT NOT NULL,
-            birth       TIMESTAMPTZ NOT NULL,
             death       TIMESTAMPTZ default 'infinity'
         );
-        CREATE TABLE IF NOT EXISTS audit_log (
+        CREATE TABLE IF NOT EXISTS audit_log_pos (
+            id          BIGSERIAL PRIMARY KEY,
+            ts          TIMESTAMPTZ NOT NULL,
+            db_user     TEXT NOT NULL,
+            action      TEXT NOT NULL,
+            table_name  TEXT NOT NULL,
+            row_id      INTEGER NOT NULL,
+            query       TEXT
+        );
+        CREATE TABLE IF NOT EXISTS audit_log_neg (
             id          BIGSERIAL PRIMARY KEY,
             ts          TIMESTAMPTZ NOT NULL,
             db_user     TEXT NOT NULL,
@@ -81,12 +88,12 @@ def setup(conn, reset=False):
             ts TIMESTAMPTZ;
         BEGIN
             IF TG_OP = 'INSERT' THEN
-                ts := NEW.birth;
-            ELSIF TG_OP = 'UPDATE' THEN
-                ts := NEW.death;
+                INSERT INTO audit_log_pos (ts, db_user, action, table_name, row_id, query)
+                VALUES (NOW(), current_user, TG_OP, TG_TABLE_NAME, NEW.id, current_query());
+            ELSIF TG_OP = 'UPDATE' THEN -- soft deletes are also updates
+                INSERT INTO audit_log_neg (ts, db_user, action, table_name, row_id, query)
+                VALUES (NEW.death, current_user, TG_OP, TG_TABLE_NAME, NEW.id, current_query());
             END IF;
-            INSERT INTO audit_log (ts, db_user, action, table_name, row_id, query)
-            VALUES (ts, current_user, TG_OP, TG_TABLE_NAME, NEW.id, current_query());
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql;
@@ -100,25 +107,27 @@ def setup(conn, reset=False):
             FOR EACH ROW EXECUTE FUNCTION audit_trigger();
     """)
 
-    # Init permissions
-    cur.execute("""
-        GRANT SELECT, INSERT, UPDATE, DELETE ON people      TO audit_tracker;
-        GRANT SELECT, INSERT, UPDATE, DELETE ON memberships TO audit_tracker;
-        GRANT INSERT                          ON audit_log   TO audit_tracker;
-        GRANT USAGE, SELECT ON SEQUENCE people_id_seq       TO audit_tracker;
-        GRANT USAGE, SELECT ON SEQUENCE memberships_id_seq  TO audit_tracker;
-        GRANT USAGE, SELECT ON SEQUENCE audit_log_id_seq    TO audit_tracker;
-    """)
+    # # Init permissions
+    # cur.execute("""
+    #     GRANT SELECT, INSERT, UPDATE, DELETE ON people      TO audit_tracker;
+    #     GRANT SELECT, INSERT, UPDATE, DELETE ON memberships TO audit_tracker;
+    #     GRANT INSERT                          ON audit_log_pos   TO audit_tracker;
+    #     GRANT USAGE, SELECT ON SEQUENCE people_id_seq       TO audit_tracker;
+    #     GRANT USAGE, SELECT ON SEQUENCE memberships_id_seq  TO audit_tracker;
+    #     GRANT USAGE, SELECT ON SEQUENCE audit_log_id_seq    TO audit_tracker;
+    # """)
 
     # Create custom annotation functions
     cur.execute("""     
-        CREATE OR REPLACE FUNCTION annotate(id BIGINT, alive BOOLEAN) RETURNS jsonb AS $$
-            SELECT CASE
-                WHEN id IS NULL AND alive           THEN jsonb_build_array(0, 9223372036854775807::bigint)
-                WHEN id IS NULL                     THEN jsonb_build_array(0)
-                WHEN alive                          THEN jsonb_build_array(id, 9223372036854775807::bigint)
-                ELSE                                    jsonb_build_array(id)
-            END;
+        CREATE OR REPLACE FUNCTION annotate(birth_id BIGINT, birth_ts TIMESTAMPTZ, death_id BIGINT, death_ts TIMESTAMPTZ) RETURNS jsonb AS $$
+            SELECT jsonb_build_object(
+                'interval', jsonb_build_array(
+                    COALESCE(birth_ts, '-infinity'::timestamptz),
+                    COALESCE(death_ts,  'infinity'::timestamptz)
+                ),
+                'birth', CASE WHEN birth_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(birth_id) END,
+                'death', CASE WHEN death_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(death_id) END
+            )
         $$ LANGUAGE sql;
         
         -- Annotation +: Simple concatenation of annotation arrays
@@ -162,7 +171,7 @@ def setup(conn, reset=False):
         CREATE OR REPLACE AGGREGATE add_annotations(jsonb) (
             SFUNC = annotations_union_trans,
             STYPE = jsonb,
-            FINALFUNC = annotations_union_final,
+            -- FINALFUNC = annotations_union_final,
             INITCOND = '[]'
         );
 
@@ -174,22 +183,77 @@ def setup(conn, reset=False):
             INITCOND = '[]'
         );
 
-        -- ANNOTATION *: Custom function to combine annotations from joins, filtering out elements greater than least upper bound, may contain duplicates?
+        -- ANNOTATION *: Custom function to combine annotations from joins
+        --      Intersect the intervals
+        --          If intervals merge, union birth and death sets
         CREATE OR REPLACE FUNCTION join_annotations(a jsonb, b jsonb) RETURNS jsonb AS $$
-            SELECT jsonb_agg(DISTINCT filtered_elem)
-            FROM (
-                SELECT (
-                    SELECT jsonb_agg(DISTINCT n ORDER BY n)
-                    FROM jsonb_array_elements(elems_a || elems_b) AS n
-                    WHERE (n::numeric) <= LEAST(
-                        (SELECT max(e::numeric) FROM jsonb_array_elements(elems_a) AS e),
-                        (SELECT max(e::numeric) FROM jsonb_array_elements(elems_b) AS e)
-                    )
-                ) AS filtered_elem
-                FROM jsonb_array_elements(a) AS elems_a, -- pairs every element from the 2 tables
-                    jsonb_array_elements(b) AS elems_b
-            ) s;
-        $$ LANGUAGE sql;        
+        DECLARE
+            result      jsonb := '[]'::jsonb;
+            a_group     jsonb;
+            b_group     jsonb;
+            a_elem      jsonb;
+            b_elem      jsonb;
+            a_start     timestamptz;
+            a_end       timestamptz;
+            b_start     timestamptz;
+            b_end       timestamptz;
+            merged_group jsonb;
+            i           int;
+            j           int;
+            k           int;
+            l           int;
+        BEGIN
+            IF jsonb_array_length(a) > 0 AND jsonb_array_length(b) > 0 THEN
+                FOR i IN 0 .. jsonb_array_length(a) - 1 LOOP
+                    a_group := a -> i;
+
+                    FOR j IN 0 .. jsonb_array_length(b) - 1 LOOP
+                        b_group := b -> j;
+                        merged_group := '[]'::jsonb;
+                        
+                        k := 0;
+                        l := 0;
+                        WHILE k < jsonb_array_length(a_group) AND l < jsonb_array_length(b_group) LOOP
+                            a_elem  := a_group -> k;
+                            a_start := (a_elem -> 'interval' ->> 0)::timestamptz;
+                            a_end   := (a_elem -> 'interval' ->> 1)::timestamptz;
+
+                            b_elem  := b_group -> l;
+                            b_start := (b_elem -> 'interval' ->> 0)::timestamptz;
+                            b_end   := (b_elem -> 'interval' ->> 1)::timestamptz;
+
+                            IF a_start < b_end AND b_start < a_end THEN
+                                merged_group := merged_group || jsonb_build_object(
+                                    'birth',   (SELECT jsonb_agg(DISTINCT v) FROM jsonb_array_elements(
+                                                    (a_elem -> 'birth') || (b_elem -> 'birth')
+                                                ) AS v),
+                                    'death',    (SELECT jsonb_agg(DISTINCT v) FROM jsonb_array_elements(
+                                                    (a_elem -> 'death') || (b_elem -> 'death')
+                                                ) AS v),
+                                    'interval', jsonb_build_array(
+                                                    GREATEST(a_start, b_start),
+                                                    LEAST(a_end, b_end)
+                                                )
+                                );
+                            END IF;
+
+                            IF a_end <= b_end THEN
+                                k := k + 1;
+                            ELSE
+                                l := l + 1;
+                            END IF;
+                        END LOOP;
+
+                        IF jsonb_array_length(merged_group) > 0 THEN
+                            result := result || jsonb_build_array(merged_group);
+                        END IF;
+                    END LOOP;
+                END LOOP;
+            END IF;
+            
+            RETURN result;
+        END;
+        $$ LANGUAGE plpgsql IMMUTABLE;
     """)
     cur.close()
 
@@ -197,14 +261,14 @@ def setup(conn, reset=False):
 def insert(conn, table, data):
     """
     Insert a new row into table. data is a dict of column->value.
-    Returns dict with id and birth timestamp, or None if failed.
+    Returns dict with id, or None if failed.
     """
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     columns = data.keys()
     values = list(data.values())
 
-    query = sql.SQL("INSERT INTO {} (birth, {}) VALUES (now(), {}) ON CONFLICT DO NOTHING RETURNING id, birth").format(
+    query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) ON CONFLICT DO NOTHING RETURNING id").format(
         sql.Identifier(table),
         sql.SQL(", ").join(map(sql.Identifier, columns)),
         sql.SQL(", ").join(sql.Placeholder() * len(values))
@@ -248,8 +312,7 @@ def update(conn, table, row_id, data):
     )
 
     # Get full current data
-    new_data = {k: v for k, v in current.items() if k not in ("id",
-                                                              "birth", "death")}
+    new_data = {k: v for k, v in current.items() if k not in ("id", "death")}
     new_data.update(data)  # overwrite with updated values
     # insert new row with same data + updates, returns new id
     res = insert(conn, table, new_data)
@@ -373,7 +436,7 @@ def get_table_columns_no_id(conn, table_name):
     return columns
 
 
-def get_table_columns_no_id_annotation(conn, table_name):
+def get_table_columns_clean(conn, table_name):
     cur = conn.cursor()
     cur.execute(
         """
@@ -382,6 +445,7 @@ def get_table_columns_no_id_annotation(conn, table_name):
         WHERE table_name = %s
             AND column_name != 'id' 
             AND column_name != 'annotation'
+            AND column_name != 'death'
         ORDER BY ordinal_position
         """,
         (table_name,),

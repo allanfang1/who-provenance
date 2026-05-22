@@ -25,12 +25,21 @@ def check():
     print("check")
 
 
-def test_seeding():
+def validate(result, expected):
+    if result == expected:
+        print("PASS")
+    else:
+        print("FAIL")
+        print("Expected:", expected)
+
+
+def test_seeding(truncate=False):
     conn = get_connection()
 
     # optional
-    print("Truncate tables")
-    truncate_tables(conn)
+    if truncate:
+        print("Truncate tables")
+        truncate_tables(conn)
 
     insert(conn, "memberships", {"y": "b1", "z": "e"})
 
@@ -78,105 +87,62 @@ def test_classic():
     validate(result, expected)
 
 
-def validate(result, expected):
-    if result == expected:
-        print("PASS")
-    else:
-        print("FAIL")
-        print("Expected:", expected)
-
-
-def test_positive():
-    """Make time travel work, 3 cases:
-    1) x = a included: birth before window_end and no death
-    2) x = a1 not included: birth after window_end
-    3) x = a2 included: death after window_end
-    """
-    print("test_positive")
+def test_annotate():
+    print("test_annotate")
     conn = get_connection()
     cur = conn.cursor()
-    test_seeding()
+    truncate_tables(conn)
 
-    # insert x = a2
-    tmp_id = insert(conn, "people", {"x": "a2", "y": "b1"})["id"]
-
-    # set window_end to now
-    window_end = datetime.datetime.now(datetime.timezone.utc)
-
-    # x = a1
-    insert(conn, "people", {"x": "a1", "y": "b1"})
-
-    # test the death after window_end case
+    insert(conn, "people", {"x": "b_before", "y": "b_before"})
+    tmp_id = insert(conn, "people", {"x": "d_before", "y": "b_before"})["id"]
     delete(conn, "people", tmp_id)
 
-    cur.execute(
-        """
-        SELECT r.x, r.y
-        FROM people AS r
-        JOIN memberships AS s ON r.y = s.y
-        WHERE r.death > %s
-            AND r.birth <= %s
-            AND s.death > %s
-            AND s.birth <= %s
-        GROUP BY r.x, r.y
-        """, (window_end, window_end, window_end, window_end))
+    window_start = datetime.datetime.now(datetime.timezone.utc)
 
+    test_seeding()
+
+    window_end = datetime.datetime.now(datetime.timezone.utc)
+
+    insert(conn, "people", {"x": "b_after", "y": "b_after"})
+
+    columns = get_table_columns_clean(conn, 'people')
+
+    my_query = Rewriter.scan("people", columns, window_start, window_end)
+    cur.execute(my_query)
     result = print_query_results(cur)
-    expected = [('a2', 'b1'), ('a', 'b1')]
-    validate(result, expected)
 
 
-# def run_test():
-#     conn = get_connection()
-#     cur = conn.cursor()
+def test_join():
+    print("test_join")
+    conn = get_connection()
+    cur = conn.cursor()
+    truncate_tables(conn)
 
-#     reset()
+    window_start = datetime.datetime.now(datetime.timezone.utc)
+    test_seeding()
+    window_end = datetime.datetime.now(datetime.timezone.utc)
 
-#     # --- seed data ---
-#     insert(conn, "memberships", {"y": "b1", "z": "e"})
+    # check()
 
-#     r0_id = insert(
-#         conn, "people", {"x": "a", "y": "b"})
-#     delete(conn, "people", r0_id)
+    # --- run test query ---
 
-#     r1_id = insert(
-#         conn, "people", {"x": "a", "y": "b"})
-#     update(conn, "people", r1_id, {"y": "b1"})
+    columns_people = get_table_columns_clean(conn, 'people')
+    columns_memberships = get_table_columns_clean(conn, 'memberships')
 
-#     s1_id = insert(conn, "memberships", {
-#         "y": "b", "z": "c"})
-#     update(conn, "memberships", s1_id, {"y": "b1"})
+    my_query = Rewriter.build_cte([
+        ("step1", Rewriter.scan("memberships",
+         columns_memberships, window_start, window_end)),
+        ("step2", Rewriter.scan("people", columns_people, window_start, window_end)),
+        ("step3", Rewriter.join("step2", columns_people,
+         "step1", columns_memberships, "t2.y = t1.y")),
+        ("final", Rewriter.aggregate(
+            "step3", ["t1_x", "t1_y"]))
+    ], "SELECT * FROM final")
 
-#     s3_id = insert(conn, "memberships", {
-#         "y": "b1", "z": "d"})
-#     s4_id = update(conn, "memberships", s3_id, {"z": "d1"})
+    cur.execute(my_query)
+    print_query_results(cur)
 
-#     delete(conn, "memberships", s4_id)
-
-#     # check()
-
-#     # --- run test query ---
-#     columns_people = get_table_columns_no_annotation(conn, 'people')
-#     columns_memberships = get_table_columns_no_annotation(conn, 'memberships')
-
-#     columns_people_no_id_annotation = get_table_columns_no_id_annotation(
-#         conn, 'people')
-#     columns_memberships_no_id_annotation = get_table_columns_no_id_annotation(
-#         conn, 'memberships')
-
-#     my_query = Rewriter.build_cte([
-#         ("step1", Rewriter.scan("memberships", columns_memberships, "2", "99")),
-#         ("step2", Rewriter.scan("people", columns_people, "2", "99")),
-#         ("step3", Rewriter.join("step2", columns_people_no_id_annotation,
-#          "step1", columns_memberships_no_id_annotation, "t1.y = t2.y")),
-#         ("final", Rewriter.aggregate_min(
-#             "step3", ["t1_x", "t1_y"]))
-#     ], "SELECT * FROM final")
-
-#     cur.execute(my_query)
-#     print_query_results(cur)
-
-#     print("run_test")
+    print("run_test")
 
 
 def print_query_results(cur, limit=None):
@@ -191,10 +157,11 @@ def print_query_results(cur, limit=None):
 COMMANDS = {
     "reset": reset,
     "check": check,
-    # "run_test": run_test,
     "test_seeding": test_seeding,
     "test_classic": test_classic,
-    "test_positive": test_positive,
+    "test_annotate": test_annotate,
+    "test_join": test_join,
+    # "test_positive": test_positive,
 }
 
 

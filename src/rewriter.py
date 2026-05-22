@@ -13,34 +13,39 @@ class Rewriter:
     @staticmethod
     def scan(table_name, columns, window_start, window_end):
         """
-        This is effectively the annotate function
-        Tuples are annotated with [[x, y]] where x is audit entry of tuple creation and y is entry of deprecation (or INF if not deprecated)
-        Columns should not include 'id' as tuple ids have finished serving their purpose to associate log entries to tuples
+        AKA the annotate function
+        For alive tuples A(t): birth <= window end AND death > window end
+        Build the annotations, based on 'birth' log entry and time, and death log entry and time
+        Tuples are annotated with [[{'birth': [w], 'death': [x], 'interval': [y, z]}]]
+        1 annotation per a in A(t)
+        'columns' should not include 'id' or 'death' as they have served their purpose to associate log entries to tuples
         """
         cols_no_id = [x for x in columns if x != "id"]
         cols_no_id = ", ".join(cols_no_id)
 
-        cols = [f"tmp.{c}" for c in columns]
-        cols = ", ".join(cols)
         return f"""
-                SELECT {cols_no_id}, annotation
-                FROM(
-                    SELECT {cols}, jsonb_build_array(jsonb_agg(elem ORDER BY elem::numeric)) as annotation
-                    FROM (
-                        SELECT t.*, annotate(a.id, t.alive) AS annotation 
-                        FROM {table_name} t 
-                        FULL JOIN (
-                            SELECT id, row_id
-                            FROM audit_log
-                            WHERE id >= {window_start}
-                                AND table_name = '{table_name}'
-                        ) AS a 
-                            ON a.row_id = t.id 
-                        WHERE a.id IS NULL OR a.id <= {window_end} -- TODO using a.id <= instead of a.ts <= for testing purposes
-                    ) as tmp
-                    CROSS JOIN LATERAL jsonb_array_elements(tmp.annotation) AS elem
-                    GROUP BY {cols}
-                ) sub
+                SELECT {cols_no_id}, jsonb_build_array(jsonb_agg(annotate(tmp.birth_id, tmp.birth_ts, b.death_id, b.death_ts) ORDER BY tmp.birth_ts)) AS annotation                                 -- tuples alive in the window, with birth and death log entries
+                FROM (
+                    SELECT *                                            -- tuples alive in the window AKA died after window start, unable to remove tuples born after the window yet
+                    FROM {table_name} t
+                    LEFT JOIN (                                         -- assigns NULL to born before window
+                        SELECT row_id, id as birth_id, ts as birth_ts   -- birth log entries after window start
+                        FROM audit_log_pos a
+                        WHERE a.table_name = '{table_name}'
+                            AND a.ts >= '{window_start}'
+                    ) AS a ON a.row_id = t.id
+                    WHERE t.death > '{window_start}'                    -- eliminates tuples dead before window start
+                        AND (a.birth_ts IS NULL                         -- eliminates tuples born after window end
+                            OR a.birth_ts <= '{window_end}')        
+                ) AS tmp
+                LEFT JOIN (                                             -- attach death logs
+                    SELECT row_id, id as death_id, ts as death_ts       -- the log entries for deaths in the window
+                    FROM audit_log_neg b
+                    WHERE b.table_name = '{table_name}'
+                        AND b.ts <= '{window_end}'
+                        AND b.ts > '{window_start}'                     -- dying @ window start means it was never alive in the window, so don't care
+                ) AS b ON b.row_id = tmp.id
+                GROUP BY {cols_no_id}
                 """
 
     @staticmethod
@@ -74,11 +79,11 @@ class Rewriter:
         cols = ", ".join(columns)
         return f"SELECT {cols}, add_annotations(annotation) AS annotation FROM {table} GROUP BY {cols}"
 
-    @staticmethod
-    def aggregate_min(table, columns: list):
-        """Uses custom aggregate function to combine annotations"""
-        cols = ", ".join(columns)
-        return f"SELECT {cols}, add_annotations_min(annotation) AS annotation FROM {table} GROUP BY {cols}"
+    # @staticmethod
+    # def aggregate_min(table, columns: list):
+    #     """Uses custom aggregate function to combine annotations"""
+    #     cols = ", ".join(columns)
+    #     return f"SELECT {cols}, add_annotations_min(annotation) AS annotation FROM {table} GROUP BY {cols}"
 
     @staticmethod
     def rename():
