@@ -84,6 +84,14 @@ class AstRewriter(Visitor):
 
 
 def rewrite_sql(sql: str, window_start: datetime.datetime, window_end: datetime.datetime, schema: dict) -> str:
+    """Rewrites the input SQL query to include provenance annotations based on the given time window and schema.
+    Args:
+        sql: The input SQL query as a string.
+        window_start: The start of the time window for provenance tracking.
+        window_end: The end of the time window for provenance tracking.
+        schema: A dictionary mapping table names to their column names (excluding 'id' and 'death').
+    Returns:
+        The rewritten SQL query as a string."""
     tree = parse_sql(sql)[0].stmt
     AstRewriter(window_start, window_end, schema)(tree)
     return RawStream()(tree)
