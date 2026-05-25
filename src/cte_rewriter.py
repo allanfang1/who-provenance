@@ -1,5 +1,5 @@
 
-class Rewriter:
+class CteRewriter:
     """CTE approach"""
     @staticmethod
     def build_cte(steps: list[tuple[str, str]], final_select: str) -> str:

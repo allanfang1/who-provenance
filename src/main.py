@@ -2,7 +2,8 @@ import argparse
 import datetime
 import json
 from db import *
-from rewriter import Rewriter
+from cte_rewriter import CteRewriter
+from ast_rewriter import rewrite_sql
 
 
 def reset():
@@ -107,7 +108,34 @@ def test_annotate():
 
     columns = get_table_columns_clean(conn, 'people')
 
-    my_query = Rewriter.scan("people", columns, window_start, window_end)
+    my_query = CteRewriter.scan("people", columns, window_start, window_end)
+    cur.execute(my_query)
+    result = print_query_results(cur)
+
+
+def test_ast():
+    print("test_ast")
+    conn = get_connection()
+    cur = conn.cursor()
+    truncate_tables(conn)
+
+    window_start = datetime.datetime.now(datetime.timezone.utc)
+    test_seeding()
+    window_end = datetime.datetime.now(datetime.timezone.utc)
+
+    columns_people = get_table_columns_clean(conn, 'people')
+    columns_memberships = get_table_columns_clean(conn, 'memberships')
+
+    my_query = rewrite_sql(
+        # "SELECT x, y FROM people AS r",
+        """
+                           SELECT r.x, r.y
+                           FROM people AS r
+                           JOIN memberships AS s ON r.y = s.y
+                           GROUP BY r.x, r.y
+                           """,
+        window_start, window_end, {'people': columns_people, 'memberships': columns_memberships})
+    print(my_query)
     cur.execute(my_query)
     result = print_query_results(cur)
 
@@ -129,13 +157,13 @@ def test_join():
     columns_people = get_table_columns_clean(conn, 'people')
     columns_memberships = get_table_columns_clean(conn, 'memberships')
 
-    my_query = Rewriter.build_cte([
-        ("step1", Rewriter.scan("memberships",
+    my_query = CteRewriter.build_cte([
+        ("step1", CteRewriter.scan("memberships",
          columns_memberships, window_start, window_end)),
-        ("step2", Rewriter.scan("people", columns_people, window_start, window_end)),
-        ("step3", Rewriter.join("step2", columns_people,
+        ("step2", CteRewriter.scan("people", columns_people, window_start, window_end)),
+        ("step3", CteRewriter.join("step2", columns_people,
          "step1", columns_memberships, "t2.y = t1.y")),
-        ("final", Rewriter.aggregate(
+        ("final", CteRewriter.aggregate(
             "step3", ["t1_x", "t1_y"]))
     ], "SELECT * FROM final")
 
@@ -161,6 +189,7 @@ COMMANDS = {
     "test_classic": test_classic,
     "test_annotate": test_annotate,
     "test_join": test_join,
+    "test_ast": test_ast,
     # "test_positive": test_positive,
 }
 
