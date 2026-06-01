@@ -101,7 +101,7 @@ def run_query():
 def full_provenance():
     """Run a full provenance demonstration, showing the annotations for each result."""
     result, column_names = run_query()
-    print(result)
+    # print(result)
     print(column_names)
     for row in result:
         print(row)
@@ -111,7 +111,7 @@ def full_provenance():
 def pos_neg_blame():
     """Run a positive/negative query demonstration."""
     result, column_names = run_query()
-    print(result)
+    # print(result)
     cleaned_results = []
     for row in result:
         *cols, annotation = row
@@ -131,7 +131,8 @@ def pos_neg_blame():
                 blames.append(lineage[-1]['death'])
         cols.append(blames)
         cleaned_results.append(cols)
-    print(column_names)
+    # print(column_names)
+    print(["exists"] + column_names[:-1] + ["blame"])
     for row in cleaned_results:
         print(row)
     return cleaned_results
@@ -140,7 +141,7 @@ def pos_neg_blame():
 def pos_neg():
     """Run a positive/negative query demonstration."""
     result, column_names = run_query()
-    print(result)
+    # print(result)
     cleaned_results = []
     for row in result:
         *cols, annotation = row
@@ -153,7 +154,8 @@ def pos_neg():
         else:
             cols.insert(0, "-")
         cleaned_results.append(cols)
-    print(column_names)
+    # print(column_names)
+    print(["exists"] + column_names[:-1])
     for row in cleaned_results:
         print(row)
     return cleaned_results
@@ -162,7 +164,7 @@ def pos_neg():
 def classic():
     """Run a classic query demonstration."""
     result, column_names = run_query()
-    print(result)
+    # print(result)
     cleaned_results = []
     for row in result:
         *cols, annotation = row
@@ -172,7 +174,8 @@ def classic():
             for lineage in annotation
         ):
             cleaned_results.append(cols)
-    print(column_names)
+    # print(column_names)
+    print(column_names[:-1])
     for row in cleaned_results:
         print(row)
     return cleaned_results
