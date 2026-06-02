@@ -8,6 +8,25 @@ from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 
 
+DEMO_USERS = {"allan", "riccardo", "miika"}
+DEFAULT_EXEC_USER = "postgres"
+
+
+def _resolve_exec_user(username):
+    if username in DEMO_USERS:
+        return username
+    return DEFAULT_EXEC_USER
+
+
+def _set_role(cur, username):
+    resolved = _resolve_exec_user(username)
+    cur.execute(sql.SQL("SET ROLE {};").format(sql.Identifier(resolved)))
+
+
+def _reset_role(cur):
+    cur.execute("RESET ROLE;")
+
+
 def get_connection(host="localhost", port=5432, dbname="demo",
                    user="postgres", password="postgres"):
     conn = psycopg2.connect(host=host, port=port, dbname=dbname,
@@ -121,14 +140,15 @@ def setup(conn, reset=False):
     cur.execute("""
         CREATE OR REPLACE FUNCTION audit_trigger() RETURNS trigger AS $$
         DECLARE
-            ts TIMESTAMPTZ;
+            op TEXT;
         BEGIN
+            op := current_setting('demo.op', true);
             IF TG_OP = 'INSERT' THEN
                 INSERT INTO audit_log_pos (ts, db_user, action, table_name, row_id, query)
-                VALUES (demo_now(), current_user, TG_OP, TG_TABLE_NAME, NEW.id, current_query());
+                VALUES (demo_now(), current_user, op, TG_TABLE_NAME, NEW.id, current_query());
             ELSIF TG_OP = 'UPDATE' THEN -- soft deletes are also updates
                 INSERT INTO audit_log_neg (ts, db_user, action, table_name, row_id, query)
-                VALUES (NEW.death, current_user, TG_OP, TG_TABLE_NAME, NEW.id, current_query());
+                VALUES (NEW.death, current_user, op, TG_TABLE_NAME, NEW.id, current_query());
             END IF;
             RETURN NEW;
         END;
@@ -142,6 +162,21 @@ def setup(conn, reset=False):
             AFTER INSERT OR UPDATE ON memberships
             FOR EACH ROW EXECUTE FUNCTION audit_trigger();
     """)
+
+    # Create demo users with top-level read/write permissions
+    for username in DEMO_USERS:
+        try:
+            cur.execute(sql.SQL("CREATE ROLE {} LOGIN").format(
+                sql.Identifier(username)))
+        except psycopg2.errors.DuplicateObject:
+            conn.rollback()
+
+        cur.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(
+            sql.Identifier(username)))
+        cur.execute(sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}").format(
+            sql.Identifier(username)))
+        cur.execute(sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}").format(
+            sql.Identifier(username)))
 
     # Create custom annotation functions
     cur.execute("""     
@@ -284,36 +319,45 @@ def setup(conn, reset=False):
     cur.close()
 
 
-def insert(conn, table, data):
+def insert(conn, table, data, as_user=None, is_update=False):
     """
     Insert a new row into table. data is a dict of column->value.
     Returns nothing.
     """
     cur = conn.cursor()
 
+    if not is_update:
+        cur.execute("SELECT set_config('demo.op', 'INSERT', false)")
+    _set_role(cur, as_user)
+
     columns = data.keys()
     values = list(data.values())
 
-    query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) ON CONFLICT DO NOTHING").format(
+    query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
         sql.Identifier(table),
         sql.SQL(", ").join(map(sql.Identifier, columns)),
         sql.SQL(", ").join(sql.Placeholder() * len(values))
     )
 
-    cur.execute(query, values)
-    cur.close()
+    try:
+        cur.execute(query, values)
+        if cur.rowcount == 0:
+            raise RuntimeError("Insert affected 0 rows.")
+    except psycopg2.errors.UniqueViolation as exc:
+        raise ValueError("Duplicate active row.") from exc
+    finally:
+        _reset_role(cur)
+        cur.close()
 
 
-def update(conn, table, current_data, new_data):
+def update(conn, table, current_data, new_data, as_user=None):
     """
     Key update! Finds the active tuple using sql.Identifier(table), not the id column
     Soft-update: deprecate the old row, insert a new one with updated values.
     """
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-
     items = list(current_data.items())
     if not items:
-        return
+        raise ValueError("No WHERE values provided.")
 
     where_cols = [sql.SQL("{} = %s").format(sql.Identifier(k))
                   for k, v in items]
@@ -323,7 +367,11 @@ def update(conn, table, current_data, new_data):
     full_data = current_data.copy()
     full_data.update(new_data)
     if current_data == full_data:
-        return
+        raise ValueError("No changes provided.")
+
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    _set_role(cur, as_user)
+    cur.execute("SELECT set_config('demo.op', 'UPDATE', false)")
 
     cur.execute(
         sql.SQL("UPDATE {} SET death = demo_now() WHERE {} AND death = 'infinity' RETURNING *").format(
@@ -334,40 +382,52 @@ def update(conn, table, current_data, new_data):
     )
     row = cur.fetchone()
     if row is None:
+        _reset_role(cur)
         cur.close()
-        return
+        raise LookupError("No active row matched the WHERE values.")
 
     full_data = {k: row[k] for k in row.keys() if k not in ("id", "death")}
     full_data.update(new_data)
 
-    insert(conn, table, full_data)
+    insert(conn, table, full_data, as_user=as_user, is_update=True)
+    _reset_role(cur)
     cur.close()
 
 
-def delete(conn, table, current_data):
+def delete(conn, table, current_data, as_user=None):
     """
     Key update! Finds the active tuple using sql.Identifier(table), not the id column
     Soft-delete: just set death = demo_now().
     """
     cur = conn.cursor()
 
+    _set_role(cur, as_user)
+    cur.execute("SELECT set_config('demo.op', 'DELETE', false)")
+
     items = list(current_data.items())
     if not items:
-        return
+        _reset_role(cur)
+        cur.close()
+        raise ValueError("No WHERE values provided.")
 
     where_cols = [sql.SQL("{} = %s").format(sql.Identifier(k))
                   for k, v in items]
     where_clause = sql.SQL(" AND ").join(where_cols)
     where_values = [v for k, v in items]
 
-    cur.execute(
-        sql.SQL("UPDATE {} SET death = demo_now() WHERE {} AND death = 'infinity'").format(
-            sql.Identifier(table),
-            where_clause
-        ),
-        where_values
-    )
-    cur.close()
+    try:
+        cur.execute(
+            sql.SQL("UPDATE {} SET death = demo_now() WHERE {} AND death = 'infinity'").format(
+                sql.Identifier(table),
+                where_clause
+            ),
+            where_values
+        )
+        if cur.rowcount == 0:
+            raise LookupError("No active row matched the WHERE values.")
+    finally:
+        _reset_role(cur)
+        cur.close()
 
 
 def get_db_overview(conn, limit=5):
