@@ -164,7 +164,7 @@ def pos_neg():
 def classic():
     """Run a classic query demonstration."""
     result, column_names = run_query()
-    # print(result)
+    print(result)
     cleaned_results = []
     for row in result:
         *cols, annotation = row
@@ -196,8 +196,8 @@ def check():
 COMMANDS = {
     "reset": reset,
     "setup": setup,
-    "classic": classic,
     "check": check,
+    "classic": classic,
     "pos_neg": pos_neg,
     "pos_neg_blame": pos_neg_blame,
     "full_provenance": full_provenance

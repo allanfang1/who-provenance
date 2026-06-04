@@ -4,6 +4,7 @@ from psycopg2.extras import RealDictCursor
 from psycopg2 import sql
 from src import demo_db
 import pandas as pd
+from src.ast_rewriter import rewrite_sql
 
 TABLES = (
     ("people", "People"),
@@ -44,21 +45,6 @@ def load_table_rows(table_name, limit=200):
 
 def get_users():
     return ["postgres"] + list(demo_db.DEMO_USERS)
-
-
-def update_state(time_override, exec_user, sql_text):
-    conn = demo_db.get_connection()
-    try:
-        if time_override.strip():
-            demo_db.set_time(conn, time_override.strip())
-        cur = conn.cursor()
-        demo_db._set_role(cur, exec_user)
-        cur.execute(sql_text)
-        demo_db._reset_role(cur)
-        cur.close()
-    finally:
-        demo_db.reset_time(conn)
-        conn.close()
 
 
 def reset_demo_state():
@@ -154,3 +140,60 @@ def update_action(table, old_values, new_values, exec_user, time_override=None):
         if pd.notna(dt):
             demo_db.reset_time(conn)
         conn.close()
+
+
+def submit_query(schema, sql_text, window_start, window_end=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")):
+    conn = demo_db.get_connection()
+    try:
+        rewritten_query = rewrite_sql(
+            sql_text, window_start=window_start, window_end=window_end, schema=schema)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(rewritten_query)
+        rows = cur.fetchall()
+
+        df = pd.DataFrame(rows)
+
+        # print(rows)
+    finally:
+        conn.close()
+    return preprocessing(df), window_start, window_end
+    return rows
+    return pd.DataFrame(rows)
+
+
+def preprocessing(df):
+    def expand(annotation):
+        result = []
+        for exp in annotation:
+            exp_result = []
+            for i, frame in enumerate(exp):
+                exp_result.append({
+                    "pos_neg": "pos",
+                    "start": frame.get("interval")[0],
+                    "end": frame.get("interval")[1],
+                    "blame": frame.get("birth")
+                })
+                if frame.get("interval")[1] != 'infinity':
+                    exp_result.append({
+                        "pos_neg": "neg",
+                        "start": frame.get("interval")[1],
+                        "end": exp[i + 1].get("interval")[0] if i + 1 < len(exp) else 'infinity',
+                        "blame": frame.get("death")
+                    })
+            result.append(exp_result)
+        return result
+
+    df = df[df['annotation'].apply(len) > 0]
+
+    df['tmp_alive'] = df['annotation'].apply(
+        lambda ann: any(
+            lineage[-1]['interval'][1] == 'infinity'
+            for lineage in ann
+        )
+    )
+
+    df['tmp_annotation'] = df['annotation'].apply(expand)
+
+    df = df.drop(columns=["annotation"])
+
+    return df

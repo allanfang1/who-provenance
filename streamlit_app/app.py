@@ -4,15 +4,16 @@ import streamlit as st
 
 from db_client import *
 from action_dialogs import *
+from helper import *
 
 if "initialized" not in st.session_state:
     st.session_state.initialized = True
     reset_demo_state()
+    st.session_state.query_rows = None
+    st.session_state.grid_version = 0
     st.success("Initialized!")
 
 st.title("Who Provenance Demo")
-
-database_tab, query_tab = st.tabs(["Database", "Query"])
 
 
 TABLE_FIELDS = {
@@ -30,7 +31,8 @@ def render_table(table_name, label, container=st):
         container.info("No rows found.")
 
 
-with database_tab:
+def database_page():
+    st.title("Database")
     control_cols = st.columns(2)
     with control_cols[0]:
         if st.button("Set to default state", use_container_width=True):
@@ -82,14 +84,55 @@ with database_tab:
                  "Death Log", container=death_col)
 
 
-with query_tab:
-    st.write("Query UI goes here.")
-    # for row in rows:
-    #     c1, c2, c3, c4 = st.columns([1, 3, 2, 1])
+def query_page():
+    st.title("Query")
+    with st.form("query_form"):
+        control_cols = st.columns(2)
+        with control_cols[0]:
+            window_start = st.text_input(
+                "Window start", value="2024-12-01 00:00:00Z")
+        with control_cols[1]:
+            window_end = st.text_input(
+                "Window end", value="2025-12-31 23:59:59Z")
+        query = st.text_area("SQL Query",
+                             value="""SELECT r.x, r.y
+FROM people AS r
+JOIN memberships AS s ON r.y = s.y
+GROUP BY r.x, r.y"""
+                             )
+        submitted = st.form_submit_button("Run Query")
+        if submitted:
+            try:
+                st.session_state.query_rows = submit_query(
+                    TABLE_FIELDS, query, window_start, window_end)
+            except Exception as exc:
+                st.error(f"Query failed: {exc}")
+                st.session_state.query_rows = None
 
-    #     c1.write(row["id"])
-    #     c2.write(row["name"])
-    #     c3.write(row["role"])
+    if "query_rows" in st.session_state and st.session_state.query_rows is not None:
+        rows, w_start, w_end = st.session_state.query_rows
+    else:
+        rows, w_start, w_end = None, None, None
 
-    #     if c4.button("✏️", key=f"edit_{row['id']}"):
-    #         edit_row(row)
+    event = None
+    if rows is not None:
+        event = st.dataframe(rows.style.apply(style_active_rows, axis=1),
+                             width="stretch",
+                             on_select="rerun",
+                             key="q_results",
+                             selection_mode="single-row",
+                             column_config={
+                                 "tmp_annotation": None, "tmp_alive": None},
+                             hide_index=True)
+
+        if event is not None and len(event.selection.rows) > 0:
+            show_row_details(
+                rows.iloc[event.selection.rows[0]], w_start, w_end)
+
+    else:
+        st.info("No results.")
+
+
+pg = st.navigation([st.Page(database_page, title="Database"),
+                   st.Page(query_page, title="Query")], position='top')
+pg.run()

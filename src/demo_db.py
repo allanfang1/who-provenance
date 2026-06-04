@@ -186,10 +186,22 @@ def setup(conn, reset=False):
                     COALESCE(birth_ts, '-infinity'::timestamptz),
                     COALESCE(death_ts,  'infinity'::timestamptz)
                 ),
-                'birth', CASE WHEN birth_id IS NULL THEN '[0]'::jsonb ELSE jsonb_build_array(birth_id) END,
+                'birth', CASE WHEN birth_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(birth_id) END,
                 'death', CASE WHEN death_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(death_id) END
             )
         $$ LANGUAGE sql;
+
+        CREATE OR REPLACE FUNCTION annotate(birth_id json, birth_ts TIMESTAMPTZ, death_id json, death_ts TIMESTAMPTZ) RETURNS jsonb AS $$
+            SELECT jsonb_build_object(
+                'interval', jsonb_build_array(
+                    COALESCE(birth_ts, '-infinity'::timestamptz),
+                    COALESCE(death_ts,  'infinity'::timestamptz)
+                ),
+                'birth', CASE WHEN birth_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(birth_id) END,
+                'death', CASE WHEN death_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(death_id) END
+            )
+        $$ LANGUAGE sql;
+        
         
         -- Annotation +: Simple concatenation of annotation arrays
         CREATE OR REPLACE FUNCTION annotations_union_trans(state jsonb, val jsonb) RETURNS jsonb AS $$

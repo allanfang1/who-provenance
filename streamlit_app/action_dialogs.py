@@ -82,3 +82,29 @@ def update_dialog(users, table_props):
                 st.rerun()
             except Exception as exc:
                 st.error(f"Update failed: {exc}")
+
+
+@st.dialog("Row Details")
+def show_row_details(row_data, w_start, w_end):
+    st.dataframe([row_data], hide_index=True, column_config={
+                 "tmp_annotation": None, "tmp_alive": None})
+    annotation = row_data.get("tmp_annotation")
+
+    for i, exp in enumerate(annotation):
+        left, right = st.columns([4, 1])
+
+        with left:
+            st.subheader(f"Explanation {i}")
+
+        with right:
+            see_more = st.button("See more", key=f"btn_{i}")
+
+        st.dataframe(exp[-1].get("blame"), key=f"outer_{i}")
+
+        if see_more:
+            for bf in exp:
+                prefix = "🟢" if bf.get("pos_neg") == "pos" else "🔴"
+
+                with st.expander(prefix + " " + datetime.fromisoformat(bf.get("start")) if bf.get("start") != '-infinity' else bf.get("start") + " to " + datetime.fromisoformat(bf.get("end")) if bf.get("end") != 'infinity' else bf.get("end")):
+                    st.dataframe(
+                        bf.get("blame"), key=f"inner_{i}_{bf.get('start')}_{bf.get('end')}")
