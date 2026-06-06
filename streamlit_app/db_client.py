@@ -64,19 +64,21 @@ def seed_demo_state():
         demo_db.insert(conn, "memberships", {"y": "b1", "z": "e"})
 
         demo_db.set_time(conn, "2025-01-01 10:00:00Z")
-        demo_db.insert(conn, "people", {"x": "a", "y": "b"})
+        demo_db.insert(conn, "people", {"x": "a", "y": "b"}, as_user="miika")
 
         demo_db.set_time(conn, "2025-01-02 10:00:00Z")
-        demo_db.delete(conn, "people", {"x": "a", "y": "b"})
+        demo_db.insert(conn, "memberships", {
+                       "y": "b", "z": "c"}, as_user="miika")
 
         demo_db.set_time(conn, "2025-01-03 10:00:00Z")
-        demo_db.insert(conn, "people", {"x": "a", "y": "b1"})
+        demo_db.delete(conn, "people", {"x": "a", "y": "b"})
 
         demo_db.set_time(conn, "2025-01-04 10:00:00Z")
-        demo_db.insert(conn, "memberships", {"y": "b", "z": "c"})
+        demo_db.insert(conn, "people", {"x": "a", "y": "b1"})
 
         demo_db.set_time(conn, "2025-01-05 10:00:00Z")
-        demo_db.update(conn, "memberships", {"y": "b", "z": "c"}, {"y": "b1"})
+        demo_db.update(conn, "memberships", {"y": "b", "z": "c"}, {
+                       "y": "b1"}, as_user="riccardo")
 
         demo_db.set_time(conn, "2025-01-05 10:00:00Z")
         demo_db.insert(conn, "memberships", {"y": "b1", "z": "d"})
@@ -156,9 +158,7 @@ def submit_query(schema, sql_text, window_start, window_end=datetime.datetime.no
         # print(rows)
     finally:
         conn.close()
-    return preprocessing(df), window_start, window_end
-    return rows
-    return pd.DataFrame(rows)
+    return preprocessing(df)
 
 
 def preprocessing(df):

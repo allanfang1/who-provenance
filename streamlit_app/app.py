@@ -1,5 +1,3 @@
-from datetime import datetime
-
 import streamlit as st
 
 from db_client import *
@@ -10,8 +8,6 @@ if "initialized" not in st.session_state:
     st.session_state.initialized = True
     reset_demo_state()
     st.session_state.query_rows = None
-    st.session_state.grid_version = 0
-    st.success("Initialized!")
 
 st.title("Who Provenance Demo")
 
@@ -109,13 +105,11 @@ GROUP BY r.x, r.y"""
                 st.error(f"Query failed: {exc}")
                 st.session_state.query_rows = None
 
-    if "query_rows" in st.session_state and st.session_state.query_rows is not None:
-        rows, w_start, w_end = st.session_state.query_rows
-    else:
-        rows, w_start, w_end = None, None, None
+    rows = st.session_state.query_rows
 
     event = None
     if rows is not None:
+        st.markdown(f"**Results (limit 200)**")
         event = st.dataframe(rows.style.apply(style_active_rows, axis=1),
                              width="stretch",
                              on_select="rerun",
@@ -126,8 +120,7 @@ GROUP BY r.x, r.y"""
                              hide_index=True)
 
         if event is not None and len(event.selection.rows) > 0:
-            show_row_details(
-                rows.iloc[event.selection.rows[0]], w_start, w_end)
+            show_row_details(rows.iloc[event.selection.rows[0]])
 
     else:
         st.info("No results.")

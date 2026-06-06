@@ -1,6 +1,9 @@
 import streamlit as st
 
 from db_client import *
+from datetime import datetime
+
+from helper import *
 
 
 @st.dialog("INSERT")
@@ -84,9 +87,9 @@ def update_dialog(users, table_props):
                 st.error(f"Update failed: {exc}")
 
 
-@st.dialog("Row Details")
-def show_row_details(row_data, w_start, w_end):
-    st.dataframe([row_data], hide_index=True, column_config={
+@st.dialog("Result Tuple")
+def show_row_details(row_data):
+    st.dataframe(pd.DataFrame([row_data]).style.apply(style_active_rows, axis=1), hide_index=True, column_config={
                  "tmp_annotation": None, "tmp_alive": None})
     annotation = row_data.get("tmp_annotation")
 
@@ -94,10 +97,12 @@ def show_row_details(row_data, w_start, w_end):
         left, right = st.columns([4, 1])
 
         with left:
-            st.subheader(f"Explanation {i}")
+            st.markdown(
+                f":{'red' if exp[-1].get('pos_neg') == 'neg' else 'green'}[**Explanation {i}**]"
+            )
 
         with right:
-            see_more = st.button("See more", key=f"btn_{i}")
+            see_more = st.button("Intervals", key=f"btn_{i}")
 
         st.dataframe(exp[-1].get("blame"), key=f"outer_{i}")
 
@@ -105,6 +110,18 @@ def show_row_details(row_data, w_start, w_end):
             for bf in exp:
                 prefix = "🟢" if bf.get("pos_neg") == "pos" else "🔴"
 
-                with st.expander(prefix + " " + datetime.fromisoformat(bf.get("start")) if bf.get("start") != '-infinity' else bf.get("start") + " to " + datetime.fromisoformat(bf.get("end")) if bf.get("end") != 'infinity' else bf.get("end")):
+                start = bf.get("start")
+                if start != "-infinity":
+                    start = datetime.fromisoformat(
+                        start).strftime("%b %-d, %Y, %H:%M")
+
+                end = bf.get("end")
+                if end != "infinity":
+                    end = datetime.fromisoformat(
+                        end).strftime("%b %-d, %Y, %H:%M")
+
+                with st.expander(f"{prefix} {start} → {end}"):
                     st.dataframe(
                         bf.get("blame"), key=f"inner_{i}_{bf.get('start')}_{bf.get('end')}")
+
+        st.divider()
