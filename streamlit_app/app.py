@@ -34,7 +34,7 @@ def database_page():
         if st.button("Set to default state", use_container_width=True):
             try:
                 reset_demo_state()
-                seed_demo_state()
+                # seed_demo_state()
                 # st.success("Demo database reset and seeded.")
                 st.rerun()
             except Exception as exc:
@@ -73,11 +73,7 @@ def database_page():
     render_table("people", "People")
     render_table("memberships", "Memberships")
 
-    birth_col, death_col = st.columns(2)
-    render_table("audit_log_pos",
-                 "Birth Log", container=birth_col)
-    render_table("audit_log_neg",
-                 "Death Log", container=death_col)
+    render_table("audit_log", "Audit Log")
 
 
 def query_page():

@@ -9,8 +9,7 @@ from src.ast_rewriter import rewrite_sql
 TABLES = (
     ("people", "People"),
     ("memberships", "Memberships"),
-    ("audit_log_pos", "Birth Log"),
-    ("audit_log_neg", "Death Log"),
+    ("audit_log", "Audit Log"),
 )
 
 
@@ -59,7 +58,6 @@ def reset_demo_state():
 def seed_demo_state():
     conn = demo_db.get_connection()
     try:
-
         demo_db.set_time(conn, "2024-01-06 10:00:00Z")
         demo_db.insert(conn, "memberships", {"y": "b1", "z": "e"})
 
