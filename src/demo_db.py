@@ -41,7 +41,8 @@ def set_time(conn, time_str):
     Call this with a string like '2025-01-01 10:00:00Z'
     """
     cur = conn.cursor()
-    cur.execute("SELECT set_config('demo.time', %s, false);", (time_str,))
+    res = cur.execute(
+        "SELECT set_config('demo.time', %s, false);", (time_str,))
     cur.close()
 
 
@@ -191,6 +192,57 @@ def setup(conn, reset=False):
                 'death', CASE WHEN death_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(death_id) END
             )
         $$ LANGUAGE sql;
+
+        CREATE OR REPLACE FUNCTION annotate_trans(state jsonb, val jsonb, pos_neg text, ts timestamptz)
+        RETURNS jsonb AS $$
+        DECLARE
+            last_entry jsonb;
+            updated_last jsonb;
+        BEGIN
+            IF val IS NULL THEN
+                RETURN state || jsonb_build_object(
+                    'interval', jsonb_build_array('-infinity'::timestamptz, 'infinity'::timestamptz),
+                    'birth',    '[]'::jsonb,
+                    'death',    '[]'::jsonb
+                );
+            ELSIF pos_neg = 'pos' THEN
+                RETURN state || jsonb_build_object(
+                    'interval', jsonb_build_array(ts, 'infinity'::timestamptz),
+                    'birth',    jsonb_build_array(val),
+                    'death',    '[]'::jsonb
+                );
+
+            ELSIF jsonb_array_length(state) = 0 THEN
+                RETURN state || jsonb_build_object(
+                    'interval', jsonb_build_array('-infinity'::timestamptz, ts),
+                    'birth',    '[]'::jsonb,
+                    'death',    jsonb_build_array(val)
+                );
+
+            ELSE
+                -- Update the last element: set interval[1] = ts and append val to death
+                last_entry := state -> (jsonb_array_length(state) - 1);
+
+                updated_last := last_entry
+                    || jsonb_build_object('interval', jsonb_set(
+                            last_entry -> 'interval',
+                            '{1}',
+                            to_jsonb(ts)
+                    ))
+                    || jsonb_build_object('death', jsonb_build_array(val))
+                ;
+
+                RETURN jsonb_set(state, ARRAY[(jsonb_array_length(state) - 1)::text], updated_last);
+            END IF;
+        END;
+        $$ LANGUAGE plpgsql;
+
+            
+        CREATE OR REPLACE AGGREGATE annotate_agg(jsonb, text, timestamptz) (
+            SFUNC = annotate_trans,
+            STYPE = jsonb,
+            INITCOND = '[]'
+        );
         
         
         -- Annotation +: Simple concatenation of annotation arrays

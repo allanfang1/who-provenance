@@ -100,11 +100,10 @@ def clear_demo_state():
 def insert_action(table, values, exec_user, time_override=None):
     dt = pd.to_datetime(time_override.strip(), errors="coerce", utc=True)
 
-    if pd.notna(dt):
-        demo_db.set_time(get_connection(), dt.strftime("%Y-%m-%d %H:%M:%SZ"))
-
     try:
         conn = demo_db.get_connection()
+        if pd.notna(dt):
+            demo_db.set_time(conn, dt.strftime("%Y-%m-%d %H:%M:%SZ"))
         demo_db.insert(conn, table, values, as_user=exec_user)
     finally:
         if pd.notna(dt):
@@ -115,11 +114,10 @@ def insert_action(table, values, exec_user, time_override=None):
 def delete_action(table, values, exec_user, time_override=None):
     dt = pd.to_datetime(time_override.strip(), errors="coerce", utc=True)
 
-    if pd.notna(dt):
-        demo_db.set_time(get_connection(), dt.strftime("%Y-%m-%d %H:%M:%SZ"))
-
     try:
         conn = demo_db.get_connection()
+        if pd.notna(dt):
+            demo_db.set_time(conn, dt.strftime("%Y-%m-%d %H:%M:%SZ"))
         demo_db.delete(conn, table, values, as_user=exec_user)
     finally:
         if pd.notna(dt):
@@ -130,11 +128,10 @@ def delete_action(table, values, exec_user, time_override=None):
 def update_action(table, old_values, new_values, exec_user, time_override=None):
     dt = pd.to_datetime(time_override.strip(), errors="coerce", utc=True)
 
-    if pd.notna(dt):
-        demo_db.set_time(get_connection(), dt.strftime("%Y-%m-%d %H:%M:%SZ"))
-
     try:
         conn = demo_db.get_connection()
+        if pd.notna(dt):
+            demo_db.set_time(conn, dt.strftime("%Y-%m-%d %H:%M:%SZ"))
         demo_db.update(conn, table, old_values, new_values, as_user=exec_user)
     finally:
         if pd.notna(dt):

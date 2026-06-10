@@ -110,29 +110,24 @@ def scan(table_name, columns, window_start, window_end):
     cols = ", ".join(columns)
 
     return f"""
-            SELECT {cols}, jsonb_build_array(jsonb_agg(annotate(tmp.birth_id, tmp.birth_ts, b.death_id, b.death_ts) ORDER BY tmp.birth_ts)) AS annotation                                 -- tuples alive in the window, with birth and death log entries
+            SELECT {cols}, 
+                jsonb_build_array(annotate_agg(tmp.blame::jsonb, tmp.pos_neg, tmp.ts ORDER BY tmp.ts)) AS annotation
+            
             FROM (
-                SELECT *                                            -- tuples alive in the window AKA died after window start, unable to remove tuples born after the window yet
+                SELECT *
                 FROM {table_name} t
-                LEFT JOIN (                                         -- assigns NULL to born before window
-                    SELECT row_id, row_to_json(a) as birth_id, ts as birth_ts   -- birth log entries after window start
-                    FROM audit_log_pos a
-                    WHERE a.table_name = '{table_name}'
-                        AND a.ts >= '{window_start}'
-                ) AS a ON a.row_id = t.id
-                WHERE t.death > '{window_start}'                    -- eliminates tuples dead before window start
-                    AND (a.birth_ts IS NULL                         -- eliminates tuples born after window end
-                        OR a.birth_ts <= '{window_end}')        
+                    LEFT JOIN (
+                        SELECT row_id, row_to_json(a) as blame, ts, pos_neg
+                        FROM audit_log a
+                        WHERE a.table_name = '{table_name}'
+                            AND a.ts >= '{window_start}'
+                            AND a.ts <= '{window_end}'
+                        ) as a ON a.row_id = t.id
+                WHERE t.death > '{window_start}'                       
             ) AS tmp
-            LEFT JOIN (                                             -- attach death logs
-                SELECT row_id, row_to_json(b) as death_id, ts as death_ts       -- the log entries for deaths in the window
-                FROM audit_log_neg b
-                WHERE b.table_name = '{table_name}'
-                    AND b.ts <= '{window_end}'
-                    AND b.ts > '{window_start}'                     -- dying @ window start means it was never alive in the window, so don't care
-            ) AS b ON b.row_id = tmp.id
             GROUP BY {cols}
             """
+
     return f"""
             SELECT {cols}, jsonb_build_array(jsonb_agg(annotate(tmp.birth_id, tmp.birth_ts, b.death_id, b.death_ts) ORDER BY tmp.birth_ts)) AS annotation                                 -- tuples alive in the window, with birth and death log entries
             FROM (

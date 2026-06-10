@@ -79,13 +79,13 @@ def database_page():
 def query_page():
     st.title("Query")
     with st.form("query_form"):
-        control_cols = st.columns(2)
-        with control_cols[0]:
-            window_start = st.text_input(
-                "Window start", value="2024-12-01 00:00:00Z")
-        with control_cols[1]:
-            window_end = st.text_input(
-                "Window end", value="2025-12-31 23:59:59Z")
+        # control_cols = st.columns(2)
+        # with control_cols[0]:
+        window_start = st.text_input(
+            "Window start", value="2024-12-01 00:00:00Z")
+        # with control_cols[1]:
+        #     window_end = st.text_input(
+        #         "Window end", value="2025-12-31 23:59:59Z")
         query = st.text_area("SQL Query",
                              value="""SELECT r.x, r.y
 FROM people AS r
@@ -96,7 +96,7 @@ GROUP BY r.x, r.y"""
         if submitted:
             try:
                 st.session_state.query_rows = submit_query(
-                    TABLE_FIELDS, query, window_start, window_end)
+                    TABLE_FIELDS, query, window_start)
             except Exception as exc:
                 st.error(f"Query failed: {exc}")
                 st.session_state.query_rows = None
