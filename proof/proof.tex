@@ -1,0 +1,141 @@
+%% The first command in your LaTeX source must be the \documentclass command.
+%%
+%% Options:
+%% twocolumn : Two column layout. Do not use twocolumn for papers submitted to CEUR-WS!
+%% hf: enable header and footer.
+\documentclass[
+% twocolumn,
+% hf,
+]{ceurart}
+
+%%
+%% One can fix some overfulls
+\sloppy
+
+%%
+%% Minted listings support 
+%% Need pygment <http://pygments.org/> <http://pypi.python.org/pypi/Pygments>
+\usepackage{listings}
+\usepackage{todonotes}
+
+\usepackage{amsthm}
+\theoremstyle{plain}
+\newtheorem{definition}{Definition}
+\newtheorem{example}{Example}
+\newtheorem{lemma}{Lemma}
+
+%% auto break lines
+\lstset{breaklines=true}
+
+%%
+%% end of the preamble, start of the body of the document source.
+\begin{document}
+
+%%
+%% The "title" command
+\title{[TODO: Who-Provenance]}
+
+\section{The Who-Provenance Framework}
+\subsection{The Blame-Frame Semiring}
+An \emph{interval} takes the right-open form $[a,b)$ and represents the set $\{x\in \mathbb{N} \cup \infty \mid a \le x < b\}$. A \emph{timeline} is a finite set of non-overlapping intervals, denoted by \emph{T}, where empty intervals are implicit and can be omitted. The power set of all timelines is denoted by $\mathcal{T}$. When the intervals of a timeline describe periods of tuple presence, its complement is naturally periods of tuple absence. To attribute responsibility, or blame, we replace each interval in a timeline with a triple we call a \emph{blame frame}, consisting of the interval itself and blame information. A \emph{blame timeline} is a finite set of blame-frames, denoted $T_F$, whose underlying intervals form a timeline, that is, $\{I \mid F \in T_F\} \in \mathcal{T}$. The set of all blame timelines is denoted by $\mathcal{T}_\mathcal{F}$. 
+
+\begin{definition}
+    Let $\mathcal{M}^+ = (M^+, \otimes_+, 1_+)$ and $\mathcal{M}^- = (M^-, \otimes_-, 1_-)$ be commutative monoids. A \emph{blame-frame} is a triple $F := (I,m^+,m^-)$, where $I$ is an interval, $m^+ \in M^+$ is the \emph{positive blame}, and $m^- \in M^-$ is the \emph{negative blame}. $m^+$ provides blame information of the interval of presence $I$, and $m^-$ of the interval of absence that immediately follows. Intuitively, a blame frame is an interval with meta information. Note that any period of absence preceding the earliest interval of presence in a timeline cannot be represented, and is the default state rather than the result of any action.
+\end{definition}
+
+We define the \emph{blame-frame intersection} operator, denoted $\cap_F$. The operator acts componentwise: the interval component is given by standard interval intersection, while the blame components are combined according to their corresponding monoid operators:
+\[
+(I_0, m_0^+, m_0^-)\cap_F (I_1, m_1^+, m_1^-) := (I_0\cap I_1, m_0^+\otimes_{+} m_1^+, m_0^-\otimes_{-} m_1^-)
+\]
+\begin{definition}
+    The \emph{blame-frame semiring} $\mathcal{B}=(\mathcal{P}(\mathcal{T}_\mathcal{F}),\oplus_\mathcal{B},\otimes_\mathcal{B},0,1)$ is built as follows:
+    \begin{itemize}
+        \item $P \oplus_\mathcal{B} Q := P \cup Q$
+        \item $P \otimes_\mathcal{B} Q := \{U \cap_F V \mid U\in P,V\in Q, I(U) \cap I(V) \neq \emptyset \}$
+        \item $0 := \emptyset$
+        \item $1 := \{([0,\infty),1_{+},1_{-})\}$
+    \end{itemize}
+    Where $(M^+, \otimes_{+}, 1_{+})$ and $(M^-, \otimes_{-}, 1_{-})$ are commutative monoids and $I(F)$ projects the interval component of a blame-frame $F$. $\otimes_\mathcal{B}$ can be understood as the pairwise intersection of blame-frame timelines.
+\end{definition}
+
+\begin{lemma}\label{lem:Bsemiring}
+    $\mathcal{B}$ is a commutative semiring.
+\end{lemma}
+
+\begin{proof}
+    We verify the semiring axioms. Let $P, Q, R \in \mathcal{B}$.
+
+    \textbf{Additive Commutative Monoid $(\mathcal{B}, \oplus_\mathcal{B}, 0)$.}
+    $\oplus_\mathcal{B}$ is defined as standard set union $\cup$. By standard definition in set theory, set union is associative and commutative. Since $P \cup \emptyset = P$, the empty set is the identity element. Thus, $(\mathcal{B}, \oplus_\mathcal{B}, 0)$ is a commutative monoid.
+
+    \textbf{Multiplicative Commutative Monoid $(\mathcal{B}, \otimes_\mathcal{B}, 1)$.} We verify the commutativity, associativity, and identity element of the multiplicative operator.
+    
+    Commutativity of $\cap_F$ follows from the commutativity of standard set intersection under the set-theoretic definition of intervals, and the commutativity of $\otimes_{+}$ and $\otimes_{-}$ in their respective monoids. For any blame-frames $F_0 = (I_0, m_0^+, m_0^-)$, $F_1 = (I_1, m_1^+, m_1^-)$, and $F_2 = (I_2, m_2^+, m_2^-)$:
+    \begin{align*}
+        F_0 \cap_F F_1 
+        &= (I_0\cap I_1,\ m_0^+\otimes_{+} m_1^+,\ m_0^-\otimes_{-} m_1^-) \\
+        &= (I_1\cap I_0,\ m_1^+\otimes_{+} m_0^+,\ m_1^-\otimes_{-} m_0^-) \\
+        &= F_1 \cap_F F_0
+    \end{align*}
+    Consequently, commutativity of $\otimes_\mathcal{B}$ follows:
+    \begin{align*}
+        P \otimes_\mathcal{B} Q 
+        &= \{U \cap_F V \mid U \in P, V \in Q, I(U) \cap I(V) \neq \emptyset \}\\
+        &= \{V \cap_F U \mid U \in P, V \in Q, I(V) \cap I(U) \neq \emptyset \} \\
+        &= Q \otimes_\mathcal{B} P 
+    \end{align*}
+    Associativity of $\cap_F$ similarly follows from the associativity of standard set intersection and of the monoid operations $\otimes_{+}$ and $\otimes_{-}$:
+    \begin{align*}
+        (F_0 \cap_F F_1) \cap_F F_2
+        &= \big( (I_0\cap I_1)\cap I_2,\ (m_0^+\otimes_{+} m_1^+)\otimes_{+} m_2^+,\ (m_0^-\otimes_{-} m_1^-)\otimes_{-} m_2^-\big) \\
+        &= \big( I_0\cap (I_1\cap I_2),\ m_0^+\otimes_{+} (m_1^+\otimes_{+} m_2^+),\ m_0^-\otimes_{-} (m_1^-\otimes_{-} m_2^-)\big) \\
+        &= F_0 \cap_F (F_1 \cap_F F_2)
+    \end{align*}
+    Associativity of $\otimes_\mathcal{B}$ follows as such:
+    \begin{align*}
+        (P \otimes_\mathcal{B} Q) \otimes_\mathcal{B} R
+        &= \{(U \cap_F V) \cap_F W \mid U\in P, V\in Q, W \in R, (I(U) \cap I(V)) \cap I(W) \neq \emptyset \}\\
+        &= \{U \cap_F (V \cap_F W) \mid U\in P, V\in Q, W \in R, I(U) \cap (I(V) \cap I(W)) \neq \emptyset \}\\
+        &= P \otimes_\mathcal{B} (Q \otimes_\mathcal{B} R)
+    \end{align*}
+    For any blame-frame $F = (I, m^+, m^-)$, since $I \subseteq [0, \infty)$ by definition, we have $I \cap [0, \infty) = I$. Moreover, $1_{+}$ and $1_{-}$ are the identity elements of their respective monoids. Thus:
+    \begin{align*}
+        F \cap_F ([0, \infty), 1_{+}, 1_{-})
+        &= \big(I \cap [0, \infty),\ m^+\otimes_{+} 1_{+},\ m^-\otimes_{-} 1_{-}\big) \\
+        &= (I, m^+, m^-) \\
+        &= F
+    \end{align*}
+    Therefore:
+    \begin{align*}
+        P \otimes_\mathcal{B} 1
+        &= \{U \cap_F ([0, \infty), 1_{+}, 1_{-}) \mid U \in P, I(U) \cap [0, \infty) \neq \emptyset \} \\
+        &= \{U \mid U \in P\} \\
+        &= P
+    \end{align*}
+    Thus, $1 = \{([0, \infty), 1_{+}, 1_{-})\}$ is the multiplicative identity.
+    
+    \textbf{Annihilation.} We show that $P \otimes_\mathcal{T} 0 = 0$. By definition,
+    \begin{align*}
+        P \otimes_\mathcal{B} \emptyset
+        &= \{U \cap_F V \mid U\in P, V\in \emptyset, I(U) \cap I(V) \neq \emptyset \} \\
+        &= \emptyset 
+    \end{align*}
+    since no such $B$ exists.
+
+    \textbf{Multiplication Distributes Over Addition.} We verify the left-distributivity of $\otimes_\mathcal{B}$ over $\oplus_\mathcal{B}$. By the definition of standard set union that is $A \cup B = \{x \mid x \in A \lor x \in B\}$:
+    \begin{align*}
+        P \otimes_\mathcal{B} (Q \oplus_\mathcal{B} R)
+        &= \{U \cap_F V \mid U\in P, V\in (Q \cup R), I(U) \cap I(V) \neq \emptyset \} \\
+        &= \{U \cap_F V \mid U\in P, (V\in Q \lor V\in R), I(U) \cap I(V) \neq \emptyset \} \\
+        &= \{U \cap_F V \mid U\in P, V\in Q, I(U) \cap I(V) \neq \emptyset \} \\
+        &\quad \cup \{U \cap_F V \mid U\in P, V\in R, I(U) \cap I(V) \neq \emptyset \} \\
+        &= (P \otimes_\mathcal{B} Q) \oplus_\mathcal{B} (P \otimes_\mathcal{B} R)
+    \end{align*}
+    Right-distributivity follows directly from the commutativity of $\otimes_\mathcal{B}$.
+\end{proof}
+
+
+\end{document}
+
+%%
+%% End of file
