@@ -1,6 +1,6 @@
 # Who Provenance
 
-Who Provenance is a small demo for SQL provenance and query rewriting. It includes a command-line workflow for running database experiments and a Streamlit app for interactive exploration.
+Who Provenance is a small demo implemenation for responsibility provenance. It includes a command-line workflow for running database experiments and a Streamlit app for interactive exploration.
 
 ## Project Structure
 
@@ -13,7 +13,6 @@ proof/
 src/
 	db.py
 	demo_db.py
-	demo.py
 	main.py
 	ast_rewriter.py
 	cte_rewriter.py
@@ -47,18 +46,6 @@ python src/main.py test_classic
 python src/main.py test_annotate
 python src/main.py test_join
 python src/main.py test_ast
-```
-
-Run the demo harness:
-
-```bash
-python src/demo.py reset
-python src/demo.py setup
-python src/demo.py check
-python src/demo.py classic
-python src/demo.py pos_neg
-python src/demo.py pos_neg_blame
-python src/demo.py full_provenance
 ```
 
 ## Streamlit Usage
