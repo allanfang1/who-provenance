@@ -1,5 +1,7 @@
-"""
-db.py - Database setup and utilities.
+"""Database setup and runtime helpers for the CLI environment.
+
+This module supports the earlier CLI/prototype path in `src.main`. The
+Streamlit UI uses `src.demo_db` instead, which owns the current demo schema.
 """
 
 import psycopg2
@@ -9,6 +11,7 @@ from psycopg2.extras import RealDictCursor
 
 def get_connection(host="localhost", port=5432, dbname="postgres",
                    user="postgres", password="postgres"):
+    """Open an autocommit connection to the demo database."""
     conn = psycopg2.connect(host=host, port=port, dbname=dbname,
                             user=user, password=password)
     conn.autocommit = True
@@ -16,6 +19,7 @@ def get_connection(host="localhost", port=5432, dbname="postgres",
 
 
 def truncate_tables(conn):
+    """Remove rows from the legacy demo tables without dropping them."""
     cur = conn.cursor()
     cur.execute("""
         TRUNCATE people, memberships, audit_log_pos, audit_log_neg;
@@ -24,7 +28,7 @@ def truncate_tables(conn):
 
 def setup(conn, reset=False):
     """
-    Create tables and permissions only.
+    Create the legacy schema, triggers, and helper functions.
     """
     cur = conn.cursor()
     if reset:
@@ -67,7 +71,7 @@ def setup(conn, reset=False):
         );
     """)
 
-    # Create indexes TODO
+    # Create indexes.
     cur.execute("""
         CREATE INDEX ON memberships(death);
         CREATE INDEX ON people(death);
@@ -117,7 +121,7 @@ def setup(conn, reset=False):
     #     GRANT USAGE, SELECT ON SEQUENCE audit_log_id_seq    TO audit_tracker;
     # """)
 
-    # Create custom annotation functions
+    # These annotation helpers are consumed by the older CTE-based rewriter.
     cur.execute("""     
         CREATE OR REPLACE FUNCTION annotate(birth_id BIGINT, birth_ts TIMESTAMPTZ, death_id BIGINT, death_ts TIMESTAMPTZ) RETURNS jsonb AS $$
             SELECT jsonb_build_object(
@@ -387,6 +391,7 @@ def get_db_overview(conn, limit=5):
 
 
 def get_table_columns(conn, table_name):
+    """Return all column names for the given table."""
     cur = conn.cursor()
     cur.execute(
         """
@@ -403,6 +408,7 @@ def get_table_columns(conn, table_name):
 
 
 def get_table_columns_no_annotation(conn, table_name):
+    """Return table columns excluding the annotation column."""
     cur = conn.cursor()
     cur.execute(
         """
@@ -420,6 +426,7 @@ def get_table_columns_no_annotation(conn, table_name):
 
 
 def get_table_columns_no_id(conn, table_name):
+    """Return table columns excluding the primary key column."""
     cur = conn.cursor()
     cur.execute(
         """
@@ -437,6 +444,7 @@ def get_table_columns_no_id(conn, table_name):
 
 
 def get_table_columns_clean(conn, table_name):
+    """Return columns useful for the legacy demo projections."""
     cur = conn.cursor()
     cur.execute(
         """

@@ -1,11 +1,21 @@
 
+"""CTE-based SQL rewriter kept for comparison and CLI demos.
+
+The Streamlit app does not use this module directly; it remains as a more
+manual rewrite strategy that was useful while prototyping the provenance logic.
+"""
+
+
 class CteRewriter:
-    """CTE approach"""
+    """Construct SQL rewrites using common table expressions."""
     @staticmethod
     def build_cte(steps: list[tuple[str, str]], final_select: str) -> str:
         """
-            steps: list of (cte_name, sql_string)
-            final_select: what to SELECT from the last CTE, e.g. "SELECT * FROM step3" 
+        Build a full WITH query from named CTE steps and a final SELECT.
+
+        Args:
+            steps: A list of (cte_name, sql_string) tuples.
+            final_select: What to SELECT from the last CTE, e.g., "SELECT * FROM cte1".
         """
         ctes = ",\n".join(f"{name} AS (\n  {sql}\n)" for name, sql in steps)
         return f"WITH {ctes}\n{final_select}"
@@ -71,11 +81,12 @@ class CteRewriter:
 
     @staticmethod
     def union_all(t1, t2):
+        """Return a UNION ALL query over two tables or CTEs."""
         return f"SELECT * FROM {t1} t1 UNION ALL SELECT * FROM {t2} t2"
 
     @staticmethod
     def aggregate(table, columns: list):
-        """Uses custom aggregate function to combine annotations"""
+        """Use the custom aggregate function to combine annotations."""
         cols = ", ".join(columns)
         return f"SELECT {cols}, add_annotations(annotation) AS annotation FROM {table} GROUP BY {cols}"
 
@@ -84,7 +95,3 @@ class CteRewriter:
     #     """Uses custom aggregate function to combine annotations"""
     #     cols = ", ".join(columns)
     #     return f"SELECT {cols}, add_annotations_min(annotation) AS annotation FROM {table} GROUP BY {cols}"
-
-    @staticmethod
-    def rename():
-        pass

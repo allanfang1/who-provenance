@@ -1,6 +1,7 @@
-"""
-demo_db.py - Database setup and utilities for the demo database.
-Allows faking the current time for easier seeding and testing.
+"""Database setup and runtime helpers for the Streamlit demo.
+
+This module owns the demo schema, the fake-time helpers used for seeding and
+testing, and the row-level mutation helpers consumed by the UI.
 """
 
 import psycopg2
@@ -13,22 +14,26 @@ DEFAULT_EXEC_USER = "postgres"
 
 
 def _resolve_exec_user(username):
+    """Map a requested demo user to an allowed database role."""
     if username in DEMO_USERS:
         return username
     return DEFAULT_EXEC_USER
 
 
 def _set_role(cur, username):
+    """Set the current session role for a demo mutation."""
     resolved = _resolve_exec_user(username)
     cur.execute(sql.SQL("SET ROLE {};").format(sql.Identifier(resolved)))
 
 
 def _reset_role(cur):
+    """Restore the default database role after a demo mutation."""
     cur.execute("RESET ROLE;")
 
 
 def get_connection(host="localhost", port=5432, dbname="demo",
                    user="postgres", password="postgres"):
+    """Open an autocommit connection to the demo database."""
     conn = psycopg2.connect(host=host, port=port, dbname=dbname,
                             user=user, password=password)
     conn.autocommit = True
@@ -47,15 +52,14 @@ def set_time(conn, time_str):
 
 
 def reset_time(conn):
-    """
-    Clears the mocked time, returning to normal wall-clock time.
-    """
+    """Clear the fake clock and return to wall-clock time."""
     cur = conn.cursor()
     cur.execute("SELECT set_config('demo.time', '', false);")
     cur.close()
 
 
 def truncate_tables(conn):
+    """Remove all rows from the demo tables without dropping schema objects."""
     cur = conn.cursor()
     cur.execute("""
         TRUNCATE people, memberships, audit_log;
@@ -64,7 +68,7 @@ def truncate_tables(conn):
 
 def setup(conn, reset=False):
     """
-    Create tables and permissions only.
+    Create the demo schema, triggers, functions, and permissions.
     """
     cur = conn.cursor()
     if reset:
@@ -115,7 +119,7 @@ def setup(conn, reset=False):
         );
     """)
 
-    # Create indexes TODO
+    # Create indexes.
     cur.execute("""
         CREATE INDEX ON memberships(death);
         CREATE INDEX ON people(death);
@@ -154,7 +158,7 @@ def setup(conn, reset=False):
             FOR EACH ROW EXECUTE FUNCTION audit_trigger();
     """)
 
-    # Create demo users with top-level read/write permissions
+    # Create demo users with top-level read/write permissions.
     for username in DEMO_USERS:
         try:
             cur.execute(sql.SQL("CREATE ROLE {} LOGIN").format(
@@ -169,7 +173,8 @@ def setup(conn, reset=False):
         cur.execute(sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}").format(
             sql.Identifier(username)))
 
-    # Create custom annotation functions
+    # The annotation functions below are the runtime contract consumed by
+    # `src.ast_rewriter` and the Streamlit result viewer.
     cur.execute("""     
         CREATE OR REPLACE FUNCTION annotate(birth_id BIGINT, birth_ts TIMESTAMPTZ, death_id BIGINT, death_ts TIMESTAMPTZ) RETURNS jsonb AS $$
             SELECT jsonb_build_object(
@@ -513,6 +518,7 @@ def get_db_overview(conn, limit=5):
 
 
 def get_table_columns(conn, table_name):
+    """Return all column names for the given table."""
     cur = conn.cursor()
     cur.execute(
         """
@@ -529,6 +535,7 @@ def get_table_columns(conn, table_name):
 
 
 def get_table_columns_no_annotation(conn, table_name):
+    """Return table columns excluding the synthetic annotation column."""
     cur = conn.cursor()
     cur.execute(
         """
@@ -546,6 +553,7 @@ def get_table_columns_no_annotation(conn, table_name):
 
 
 def get_table_columns_no_id(conn, table_name):
+    """Return table columns excluding the id column."""
     cur = conn.cursor()
     cur.execute(
         """
@@ -563,6 +571,7 @@ def get_table_columns_no_id(conn, table_name):
 
 
 def get_table_columns_clean(conn, table_name):
+    """Return all non-metadata columns."""
     cur = conn.cursor()
     cur.execute(
         """

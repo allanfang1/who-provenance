@@ -167,7 +167,7 @@ def submit_query(schema, sql_text, window_start, window_end=datetime.datetime.no
 
         df = pd.DataFrame(rows)
 
-        # print(rows)
+        print(rows)
     finally:
         conn.close()
     return preprocessing(df)

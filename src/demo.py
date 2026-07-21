@@ -1,5 +1,8 @@
 import argparse
 import datetime
+
+"""Sandbox CLI access to Streamlit UI demo database and SQL rewriter environment."""
+
 import demo_db
 from ast_rewriter import rewrite_sql
 
@@ -182,6 +185,7 @@ def classic():
 
 
 def check():
+    """Print an overview of the demo database contents."""
     conn = demo_db.get_connection()
     overview = demo_db.get_db_overview(conn, 20)
     for table in overview:
@@ -205,6 +209,7 @@ COMMANDS = {
 
 
 def main():
+    """Parse the CLI command and run the selected demo routine."""
     parser = argparse.ArgumentParser(description="Run the demo program.")
     parser.add_argument("command", choices=COMMANDS.keys(),
                         help="The command to run.")

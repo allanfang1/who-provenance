@@ -1,3 +1,9 @@
+"""CLI entrypoint for the legacy/experimental who provenance pipeline.
+
+This script exercises `src.db`, `src.cte_rewriter`, and the older demo flows.
+It is not part of the Streamlit app runtime.
+"""
+
 import argparse
 import datetime
 import json
@@ -7,6 +13,7 @@ from ast_rewriter import rewrite_sql
 
 
 def reset():
+    """Reset the demo schema and recreate its tables and triggers."""
     conn = get_connection()
     # delete_log_files()
     # drop_log_table(conn)
@@ -15,6 +22,7 @@ def reset():
 
 
 def check():
+    """Print a readable overview of the current database state."""
     conn = get_connection()
     overview = get_db_overview(conn, 20)
     for table in overview:
@@ -27,6 +35,7 @@ def check():
 
 
 def validate(result, expected):
+    """Print a PASS/FAIL message for a simple equality check."""
     if result == expected:
         print("PASS")
     else:
@@ -35,6 +44,7 @@ def validate(result, expected):
 
 
 def test_seeding(truncate=False):
+    """Seed the demo data used by the CLI experiment commands."""
     conn = get_connection()
 
     # optional
@@ -66,7 +76,7 @@ def test_seeding(truncate=False):
 
 
 def test_classic():
-    """The frame of reference"""
+    """Run the unannotated baseline query."""
     print("test_classic")
     conn = get_connection()
     cur = conn.cursor()
@@ -89,6 +99,7 @@ def test_classic():
 
 
 def test_annotate():
+    """Run the older CTE-based provenance annotation path."""
     print("test_annotate")
     conn = get_connection()
     cur = conn.cursor()
@@ -114,6 +125,7 @@ def test_annotate():
 
 
 def test_ast():
+    """Run the AST-based provenance rewrite path."""
     print("test_ast")
     conn = get_connection()
     cur = conn.cursor()
@@ -141,6 +153,7 @@ def test_ast():
 
 
 def test_join():
+    """Exercise the manual CTE join/aggregate rewrite path."""
     print("test_join")
     conn = get_connection()
     cur = conn.cursor()
@@ -174,6 +187,7 @@ def test_join():
 
 
 def print_query_results(cur, limit=None):
+    """Print query results and return the fetched rows."""
     column_names = [desc[0] for desc in cur.description]
     rows = cur.fetchall() if limit is None else cur.fetchall()[:limit]
     print(column_names)
@@ -195,6 +209,7 @@ COMMANDS = {
 
 
 def main():
+    """Parse the CLI command and dispatch to the requested test routine."""
     parser = argparse.ArgumentParser(description="Run the main program.")
     parser.add_argument("command", choices=COMMANDS.keys(),
                         help="The command to run.")
