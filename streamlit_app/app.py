@@ -1,3 +1,10 @@
+"""Streamlit entrypoint for the Who Provenance demo application.
+
+The app is split into two pages: database page for database state view and management, 
+and a query page that runs SQL against the current demo state and lets
+the user inspect query output.
+"""
+
 import streamlit as st
 
 from db_client import *
@@ -5,6 +12,7 @@ from action_dialogs import *
 from helper import *
 
 if "initialized" not in st.session_state:
+    # Trigger state reset on initialization
     st.session_state.initialized = True
     reset_demo_state()
     st.session_state.query_rows = None
@@ -19,6 +27,7 @@ TABLE_FIELDS = {
 
 
 def render_table(table_name, label, container=st):
+    """Render a named table in the given Streamlit container."""
     container.markdown(f"### {label}")
     _, rows = load_table_rows(table_name)
     if rows is not None:
@@ -28,6 +37,7 @@ def render_table(table_name, label, container=st):
 
 
 def database_page():
+    """Render the database page."""
     st.title("Database")
     control_cols = st.columns(2)
     with control_cols[0]:
@@ -77,15 +87,11 @@ def database_page():
 
 
 def query_page():
+    """Render the SQL query page and persist the result set."""
     st.title("Query")
     with st.form("query_form"):
-        # control_cols = st.columns(2)
-        # with control_cols[0]:
         window_start = st.text_input(
             "Window start", value="2024-12-01 00:00:00Z")
-        # with control_cols[1]:
-        #     window_end = st.text_input(
-        #         "Window end", value="2025-12-31 23:59:59Z")
         query = st.text_area("SQL Query",
                              value="""SELECT r.x, r.y
 FROM people AS r

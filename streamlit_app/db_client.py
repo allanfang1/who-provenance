@@ -1,3 +1,9 @@
+"""Viewmodel/controller layer for the Streamlit provenance demo.
+
+This module wraps the lower-level demo database API with app-friendly helper
+functions for loading rows, applying mutations, and running rewritten queries.
+"""
+
 import datetime
 
 from psycopg2.extras import RealDictCursor
@@ -14,10 +20,12 @@ TABLES = (
 
 
 def get_connection():
+    """Return a database connection for the demo database."""
     return demo_db.get_connection()
 
 
 def load_table_rows(table_name, limit=200):
+    """Load rows from a table and normalize any infinite datetime values."""
     conn = demo_db.get_connection()
     try:
         columns = demo_db.get_table_columns(conn, table_name)
@@ -43,10 +51,12 @@ def load_table_rows(table_name, limit=200):
 
 
 def get_users():
+    """Return the demo users that can be selected in the UI."""
     return ["postgres"] + list(demo_db.DEMO_USERS)
 
 
 def reset_demo_state():
+    """Reset the database (including schema + permissions) and reseed the demo database."""
     conn = demo_db.get_connection()
     try:
         demo_db.setup(conn, reset=True)
@@ -56,6 +66,7 @@ def reset_demo_state():
 
 
 def seed_demo_state():
+    """Seed the database with a scenario."""
     conn = demo_db.get_connection()
     try:
         demo_db.set_time(conn, "2024-01-06 10:00:00Z")
@@ -89,6 +100,7 @@ def seed_demo_state():
 
 
 def clear_demo_state():
+    """Remove all rows from the demo tables and restore the clock."""
     try:
         conn = demo_db.get_connection()
         demo_db.truncate_tables(conn)
@@ -98,10 +110,12 @@ def clear_demo_state():
 
 
 def insert_action(table, values, exec_user, time_override=None):
+    """Insert a row, optionally under a chosen timestamp."""
     dt = pd.to_datetime(time_override.strip(), errors="coerce", utc=True)
 
     try:
         conn = demo_db.get_connection()
+        # The demo uses the database clock to make provenance windows repeatable.
         if pd.notna(dt):
             demo_db.set_time(conn, dt.strftime("%Y-%m-%d %H:%M:%SZ"))
         demo_db.insert(conn, table, values, as_user=exec_user)
@@ -112,6 +126,7 @@ def insert_action(table, values, exec_user, time_override=None):
 
 
 def delete_action(table, values, exec_user, time_override=None):
+    """Delete a row, optionally under a chosen timestamp."""
     dt = pd.to_datetime(time_override.strip(), errors="coerce", utc=True)
 
     try:
@@ -126,6 +141,7 @@ def delete_action(table, values, exec_user, time_override=None):
 
 
 def update_action(table, old_values, new_values, exec_user, time_override=None):
+    """Update a row, optionally under a chosen timestamp."""
     dt = pd.to_datetime(time_override.strip(), errors="coerce", utc=True)
 
     try:
@@ -140,6 +156,7 @@ def update_action(table, old_values, new_values, exec_user, time_override=None):
 
 
 def submit_query(schema, sql_text, window_start, window_end=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")):
+    """Rewrite a user query for provenance windows and return processed rows."""
     conn = demo_db.get_connection()
     try:
         rewritten_query = rewrite_sql(
@@ -157,6 +174,7 @@ def submit_query(schema, sql_text, window_start, window_end=datetime.datetime.no
 
 
 def preprocessing(df):
+    """Derive display-friendly provenance columns from the raw query output."""
     def expand(annotation):
         result = []
         for exp in annotation:

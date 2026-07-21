@@ -1,3 +1,5 @@
+"""Streamlit dialogs for editing rows and inspecting query provenance."""
+
 import streamlit as st
 
 from db_client import *
@@ -8,6 +10,7 @@ from helper import *
 
 @st.dialog("INSERT")
 def insert_dialog(users, table_props):
+    """Collect values for an insert and submit the action."""
     exec_user = st.selectbox("Edit as user:", users)
     time_override = st.text_input(
         "Time override i.e., 2025-01-01 10:00:00Z (default: current time)"
@@ -30,6 +33,7 @@ def insert_dialog(users, table_props):
 
 @st.dialog("DELETE")
 def delete_dialog(users, table_props):
+    """Collect key values for a delete and submit the action."""
     exec_user = st.selectbox("Edit as user:", users)
     time_override = st.text_input(
         "Time override i.e., 2025-01-01 10:00:00Z (default: current time)"
@@ -52,6 +56,7 @@ def delete_dialog(users, table_props):
 
 @st.dialog("UPDATE")
 def update_dialog(users, table_props):
+    """Collect WHERE/SET values for an update and submit the action."""
     exec_user = st.selectbox("Edit as user:", users)
     time_override = st.text_input(
         "Time override i.e., 2025-01-01 10:00:00Z (default: current time)"
@@ -86,6 +91,7 @@ def update_dialog(users, table_props):
 
 @st.dialog("Result Tuple")
 def show_row_details(row_data):
+    """Render provenance details for a selected query result row."""
     st.dataframe(pd.DataFrame([row_data]).style.apply(style_active_rows, axis=1), hide_index=True, column_config={
                  "tmp_annotation": None, "tmp_alive": None})
     annotation = row_data.get("tmp_annotation")
@@ -104,6 +110,8 @@ def show_row_details(row_data):
         st.dataframe(exp[-1].get("blame"), key=f"outer_{i}")
 
         if see_more:
+            # Each provenance interval is shown separately so the user can
+            # inspect the birth/death intervals that make up the explanation.
             for bf in exp:
                 prefix = "🟢" if bf.get("pos_neg") == "pos" else "🔴"
 
