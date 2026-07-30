@@ -1,7 +1,9 @@
-"""SQL rewriter used by the Streamlit app.
+"""SQL rewriter by AST, used by the Streamlit app.
 
-The rewriter injects provenance annotations into SELECT queries so the UI can
-render lineage intervals alongside each result row.
+The rewriter injects provenance annotations into SELECT queries so that the UI can
+render lineage intervals alongside each result row. 
+
+rewrite_sql() is the entry point to this module and is the only recommended way to use it.
 """
 
 import datetime
@@ -29,14 +31,18 @@ class AstRewriter(Visitor):
                 alias=node.alias if node.alias else Alias(
                     aliasname=node.relname)
             )
+        else:
+            raise ValueError(
+                f"Table '{node.relname}' missing from schema. "
+                f"Expected one of: {list(self.schema.keys())}"
+            )
 
     def visit_SelectStmt(self, ancestors, node):
-        """Append the annotation column to each SELECT list."""
+        """Append the annotation column to each SELECT list.
+        Known bug: may duplicate the annotation column, notably if target is A_Star."""
         target_list = list(node.targetList or [])
 
-        if node.groupClause:
-            # Grouped queries need the custom aggregate so the annotation arrays
-            # collapse correctly before the final projection.
+        if node.groupClause:  # Trigger custom aggregation for annotation under alternate use
             val = FuncCall(
                 funcname=(String("add_annotations"),),
                 args=(ColumnRef(fields=["annotation"]),)
@@ -53,14 +59,14 @@ class AstRewriter(Visitor):
         node.targetList = tuple(target_list)
 
     def visit_JoinExpr(self, ancestors, node):
-        """Rewrite annotation targets so joins combine lineage from both sides."""
+        """Rewrite ancestor targets so joins combine lineage from both sides."""
         left_name = node.larg.alias if node.larg.alias else node.larg.relname
         right_name = node.rarg.alias if node.rarg.alias else node.rarg.relname
 
         select_node = ancestors
         while select_node is not None and not isinstance(select_node.node, SelectStmt):
             select_node = select_node.parent
-        select_node = select_node.node
+        select_node = select_node.node  # should be safe :)
 
         new_targets = []
         for t in (select_node.targetList or []):
@@ -73,7 +79,6 @@ class AstRewriter(Visitor):
                         ColumnRef(fields=(right_name, "annotation")),
                     )
                 )
-
                 if isinstance(t.val, FuncCall) and t.val.funcname[0].sval == "add_annotations":
                     t.val.args = (join_func,)
                     new_targets.append(t)
@@ -88,17 +93,18 @@ class AstRewriter(Visitor):
         select_node.targetList = tuple(new_targets)
 
 
-def rewrite_sql(sql: str, window_start: datetime.datetime, window_end: datetime.datetime, schema: dict) -> str:
-    """Rewrites the input SQL query to include provenance annotations based on the given time window and schema.
+# TODO: check if we can get rid of the window_end? because it's kinda hard tied to current
+def rewrite_sql(sql_string: str, window_start: datetime.datetime, window_end: datetime.datetime, schema: dict) -> str:
+    """Rewrites the input SQL query to include provenance annotations based on the given time window and schema. Entry point to this module.
     Args:
-        sql: The input SQL query as a string.
+        sql_string: The input SQL query as a string. All referenced tables must be present in the schema.
         window_start: The start of the time window for provenance tracking.
         window_end: The end of the time window for provenance tracking.
         schema: A dictionary mapping table names to their column names (excluding 'id' and 'death').
     Returns:
         The rewritten SQL query as a string.
     """
-    tree = parse_sql(sql)[0].stmt
+    tree = parse_sql(sql_string)[0].stmt
     AstRewriter(window_start, window_end, schema)(tree)
     return RawStream()(tree)
 
@@ -106,32 +112,26 @@ def rewrite_sql(sql: str, window_start: datetime.datetime, window_end: datetime.
 def scan(table_name, columns, window_start, window_end):
     """
     Generate a SQL query that scans `table_name` and attaches provenance
-    annotations to each result tuple.
+    annotations to each row.
 
     The generated query:
-      - projects the specified columns,
-      - filters tuples whose lifetime overlaps the time window,
+      - projects the specified columns - note that only columns id and death are projected away under standard usage
+      - filters out tuples whose lifetime do not overlap with the time window,
       - joins matching audit log entries within
         [`window_start`, `window_end`], and
       - aggregates them into an `annotation` JSONB column.
 
     The `annotation` column is a JSON array of provenance annotations. Each
-    annotation has the form:
-
+    annotation has the form [[blameframe...]...], where each blameframe has the structure:
         {
             "birth": [<positive log entries>] | null,
             "death": [<negative log entries>] | null,
             "interval": [start_timestamp, end_timestamp]
         }
 
-    A result tuple may have multiple annotations, each representing a distinct
-    provenance interval.
-
     Args:
         table_name: Name of the table to scan.
-        columns: Columns to project. This should not include the internal
-            columns `id` or `death`, which are used only for joining audit
-            records and lifetime filtering.
+        columns: Columns to project.
         window_start: Inclusive start of the annotation window.
         window_end: Inclusive end of the annotation window.
 
@@ -143,7 +143,6 @@ def scan(table_name, columns, window_start, window_end):
     return f"""
             SELECT {cols}, 
                 jsonb_build_array(annotate_agg(tmp.blame::jsonb, tmp.pos_neg, tmp.ts ORDER BY tmp.ts)) AS annotation
-            
             FROM (
                 SELECT *
                 FROM {table_name} t
