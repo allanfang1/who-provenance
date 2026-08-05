@@ -175,30 +175,10 @@ def setup(conn, reset=False):
 
     # The annotation functions below are the runtime contract consumed by
     # `src.ast_rewriter` and the Streamlit result viewer.
+    # TODO: we gotta clean this up I think a bunch of this doesn't do anything
     cur.execute("""     
-        CREATE OR REPLACE FUNCTION annotate(birth_id BIGINT, birth_ts TIMESTAMPTZ, death_id BIGINT, death_ts TIMESTAMPTZ) RETURNS jsonb AS $$
-            SELECT jsonb_build_object(
-                'interval', jsonb_build_array(
-                    COALESCE(birth_ts, '-infinity'::timestamptz),
-                    COALESCE(death_ts,  'infinity'::timestamptz)
-                ),
-                'birth', CASE WHEN birth_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(birth_id) END,
-                'death', CASE WHEN death_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(death_id) END
-            )
-        $$ LANGUAGE sql;
-
-        CREATE OR REPLACE FUNCTION annotate(birth_id json, birth_ts TIMESTAMPTZ, death_id json, death_ts TIMESTAMPTZ) RETURNS jsonb AS $$
-            SELECT jsonb_build_object(
-                'interval', jsonb_build_array(
-                    COALESCE(birth_ts, '-infinity'::timestamptz),
-                    COALESCE(death_ts,  'infinity'::timestamptz)
-                ),
-                'birth', CASE WHEN birth_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(birth_id) END,
-                'death', CASE WHEN death_id IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(death_id) END
-            )
-        $$ LANGUAGE sql;
-
-        CREATE OR REPLACE FUNCTION annotate_trans(state jsonb, val jsonb, pos_neg text, ts timestamptz)
+        -- Transition function for annotate_agg() 
+        CREATE OR REPLACE FUNCTION annotate_agg_trans(state jsonb, val jsonb, pos_neg text, ts timestamptz)
         RETURNS jsonb AS $$
         DECLARE
             last_entry jsonb;
@@ -216,14 +196,12 @@ def setup(conn, reset=False):
                     'birth',    jsonb_build_array(val),
                     'death',    '[]'::jsonb
                 );
-
             ELSIF jsonb_array_length(state) = 0 THEN
                 RETURN state || jsonb_build_object(
                     'interval', jsonb_build_array('-infinity'::timestamptz, ts),
                     'birth',    '[]'::jsonb,
                     'death',    jsonb_build_array(val)
                 );
-
             ELSE
                 -- Update the last element: set interval[1] = ts and append val to death
                 last_entry := state -> (jsonb_array_length(state) - 1);
@@ -236,15 +214,14 @@ def setup(conn, reset=False):
                     ))
                     || jsonb_build_object('death', jsonb_build_array(val))
                 ;
-
                 RETURN jsonb_set(state, ARRAY[(jsonb_array_length(state) - 1)::text], updated_last);
             END IF;
         END;
         $$ LANGUAGE plpgsql;
 
-            
+        -- For aggregating the log entries of the to give the initial annotation of base tuples    
         CREATE OR REPLACE AGGREGATE annotate_agg(jsonb, text, timestamptz) (
-            SFUNC = annotate_trans,
+            SFUNC = annotate_agg_trans,
             STYPE = jsonb,
             INITCOND = '[]'
         );
@@ -265,41 +242,12 @@ def setup(conn, reset=False):
             ) s;
         $$ LANGUAGE sql;
         
-        -- Annotation +: Final function to remove duplicates and sort inner arrays, keeping only the those with a MAXVALUE
-        CREATE OR REPLACE FUNCTION annotations_union_final_min(state jsonb) RETURNS jsonb AS $$
-            SELECT CASE
-                WHEN EXISTS (
-                    SELECT 1 
-                    FROM jsonb_array_elements(state) AS elem,
-                        jsonb_array_elements(elem) AS inner_elem
-                    WHERE inner_elem = to_jsonb(9223372036854775807::bigint)
-                )
-                THEN (
-                    SELECT jsonb_agg(DISTINCT sorted_elem)
-                    FROM (
-                        SELECT (SELECT jsonb_agg(n ORDER BY n::numeric) 
-                                FROM jsonb_array_elements(elem) AS n) AS sorted_elem
-                        FROM jsonb_array_elements(state) AS elem
-                        WHERE elem @> to_jsonb(9223372036854775807::bigint)
-                    ) s
-                )
-                ELSE state
-            END;
-        $$ LANGUAGE sql;
         
         -- Annotation +: Custom aggregate
         CREATE OR REPLACE AGGREGATE add_annotations(jsonb) (
             SFUNC = annotations_union_trans,
             STYPE = jsonb,
             -- FINALFUNC = annotations_union_final,
-            INITCOND = '[]'
-        );
-
-        -- Annotation +: Custom aggregate that keeps only elements with MAXVALUE 
-        CREATE OR REPLACE AGGREGATE add_annotations_min(jsonb) (
-            SFUNC = annotations_union_trans,
-            STYPE = jsonb,
-            FINALFUNC = annotations_union_final_min,
             INITCOND = '[]'
         );
 

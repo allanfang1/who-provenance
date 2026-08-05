@@ -162,12 +162,14 @@ def submit_query(schema, sql_text, window_start, window_end=datetime.datetime.no
         rewritten_query = rewrite_sql(
             sql_text, window_start=window_start, window_end=window_end, schema=schema)
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        # cur = conn.cursor()
         cur.execute(rewritten_query)
+        # print(cur.description)
         rows = cur.fetchall()
 
         df = pd.DataFrame(rows)
 
-        print(rows)
+        print(rows)  # TODO check this guy
     finally:
         conn.close()
     return preprocessing(df)
