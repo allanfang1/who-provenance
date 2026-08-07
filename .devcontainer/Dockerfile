@@ -15,5 +15,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 #     && apt-get -y install --no-install-recommends <your-package-list-here>
 
+# RUN apt-get update && apt-get install -y \
+#     bison \
+#     flex \
+#     gcc \
+#     make \
+#     && rm -rf /var/lib/apt/lists/*
+
 
 

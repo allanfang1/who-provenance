@@ -1,0 +1,7 @@
+experiments:
+  - name: baseline
+    database: tpcds
+    scale: 1
+    updates: 1
+    provenance: none
+    iterations: 1
