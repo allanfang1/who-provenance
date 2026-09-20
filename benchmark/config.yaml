@@ -1,7 +1,8 @@
 experiments:
   - name: baseline
     database: tpcds
-    scale: 1
-    updates: 1
+    schema: baseline
     provenance: none
+    scale: 1
+    updates: 2
     iterations: 1

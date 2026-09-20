@@ -1,5 +1,7 @@
 psycopg2
 pglast
+sqlglot
 
 streamlit
 pandas
+pyYAML
